@@ -31,17 +31,23 @@ execute:
 In this file, we will compute all indices of careless responding. We aim for the following structure: 
 `external_id`, `counter`, `index`. There should be no implicit missingness. 
 
+TODOS:
+- We should maybe return 0 for the within-assessment-SD instead of NA when there is no variability at all. 
+
 
 We first load all relevant packages: 
 ```{r packages}
 if(!require(pacman)) install.packages("pacman")
-pacman::p_load("dplyr", "tidyr", "here", "ggplot2", "rrcov", "Hmisc")  
+pacman::p_load("dplyr", "tidyr", "here", "ggplot2", "rrcov", "Hmisc", "sysfonts", "showtext", 
+               "ggh4x")  
 
 source(here("scripts", "00_functions.R"))
   
 set.seed(35032)  
 ```
-We load the data and remove all non-EMA prompts: 
+
+
+We load the data and remove all non-EMA prompts. Insert your dataset in the subfolder `/data/` and load it here. 
 ```{r read-data}
 data <- read.csv(here::here("data", "WARND_stage2_c1234_trainingset_before_30min_v2024_07_16.csv"))
 
@@ -163,7 +169,57 @@ df_indices <- indices |>
 
 # Visualizations
 
+## Large grid plot with all indices
 
+
+kValues seem to be useless, so we filter them out here. Also, we filter out extreme time differences.
+
+We first create a plot for all integer/proportion indices: 
+```{r}
+# use color based on the Johnson palette from MetBrewer
+fill_color <- "#132b69"
+
+
+integer_plot <- df_indices |> 
+  select(!c(external_id, counter, kValues)) |> 
+  filter(sd_time_diff < 10) |> 
+  select(anto_violations, syno_violations, longstring_proportion, mode_pct) |> 
+  pivot_longer(cols = everything(), names_to = "index") |>
+  filter(!is.na(value)) |> 
+  ggplot(aes(x = value))+
+  geom_bar(fill = fill_color)+
+  ggh4x::facet_wrap2(.~index, 
+                     scales = "free")+
+  scale_y_continuous(expand = c(0,0))+
+  theme_bs()+
+  labs(x = "", 
+       y = "")
+```
+
+Then create a plot for all continuous indices: 
+```{r}
+cont_plot <- df_indices |> 
+  select(!c(external_id, counter, kValues)) |> 
+  filter(sd_time_diff < 10) |> 
+  select(assessment_sd, mahalanobis_dist, robustpca_dist, sd_time_diff) |> 
+  pivot_longer(cols = everything(), names_to = "index") |>
+  filter(!is.na(value)) |> 
+  ggplot(aes(x = value))+
+  geom_density(fill = fill_color, color = fill_color,
+              # use finer bandwidth
+               adjust = 1/4)+
+  ggh4x::facet_wrap2(.~index, 
+                     scales = "free")+
+  scale_y_continuous(expand = c(0,0))+
+  theme_bs()+
+  labs(x = "", 
+       y = "")
+```
+
+Combine the plots: 
+```{r}
+
+```
 
 
 
