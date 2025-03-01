@@ -1,0 +1,178 @@
+---
+title: "Careless Responding"
+subtitle: "Title of your Analysis"
+author: 
+ - name: Björn S. Siepe
+   orcid: 0000-0002-9558-4648
+   affiliations: University of Marburg
+ - name: Add name(s) of person(s) responsible for respective file
+   orcid: 0000-0002-9558-4648
+   affiliations: to be added
+date: "`r Sys.Date()`"
+format:
+  html:
+    toc: true
+    number-sections: true
+    theme: cosmo
+    code-fold: true
+    code-tools: true
+    code-summary: "Show the code"
+    fig-width: 7
+    fig-height: 4.5
+    fig-align: "center"
+    embed-resources: true
+execute:
+  message: false
+  warning: false
+  eval: true # run code?
+---
+
+# Background
+In this file, we will compute all indices of careless responding. We aim for the following structure: 
+`external_id`, `counter`, `index`. There should be no implicit missingness. 
+
+
+We first load all relevant packages: 
+```{r packages}
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load("dplyr", "tidyr", "here", "ggplot2", "rrcov", "Hmisc")  
+
+source(here("scripts", "00_functions.R"))
+  
+set.seed(35032)  
+```
+We load the data and remove all non-EMA prompts: 
+```{r read-data}
+data <- read.csv(here::here("data", "WARND_stage2_c1234_trainingset_before_30min_v2024_07_16.csv"))
+
+data <- data |> 
+  filter(!is.na(counter))
+```
+
+Relevant EMA items and their reaction times: 
+```{r ema-itemss}
+ema_items <-  c("sad_d", "stressed_d", "overwhelm_d", "nervous_d", "ruminate_d", "irritable_d", "tired_d", "cheerful_d", "motivated_d", "relaxed_d")
+rt_ema_items <- paste0("rt_", ema_items)
+
+```
+
+
+# Data Preparation
+
+We first subset the data for testing the functions on a smaller dataframe: 
+
+```{r subset-data}
+# select 10 individuals at random
+ids_to_subset <- data |> 
+  distinct(external_id) |> 
+  slice_sample(n = 10) |> 
+  pull(external_id)
+
+
+subset_data <- data |> 
+  filter(external_id %in% ids_to_subset)
+```
+
+
+
+# Analysis
+
+Currently, this still depends on `sd_within_assessment` being the first, to have no implicit missingness when using `left_join()` later below.
+```{r}
+# Define the functions and their parameters
+index_functions <- list(
+    sd_within_assessment = list(
+    func = calc_within_assessment_sd,
+    args = list(
+      items = ema_items,
+      id_col = "external_id"
+    )
+  ),
+  mahalanobis = list(
+    func = calc_indicator_mahalanobis,
+    args = list(items = ema_items)
+  ),
+  robust_pca = list(
+    func = calc_indicator_rob_PCA_orthogonal_distance,
+    args = list(items = ema_items)
+  ),
+  psychometric_syntonym = list(
+    func = calc_psychometric_synonym_violations,
+    args = list(
+      items = ema_items,
+      cor_threshold = 0.45,
+      synonym_difference_threshold = 5
+    )
+  ),
+  psychometric_antonym = list(
+    func = calc_psychometric_antonym_violations,
+    args = list(
+      items = ema_items,
+      cor_threshold = 0.45,
+      antonym_maxvalue_threshold = 5
+    )
+  ),
+  sd_response_times = list(
+    func = calc_sd_response_times,
+    args = list(items = rt_ema_items)
+  ),
+
+  items_at_mode = list(
+    func = calc_mode_percentage,
+    args = list(
+      items = ema_items,
+      id_col = "external_id"
+    )
+  ),
+  longstring = list(
+    func = calc_longstring_proportions, 
+    args = list(
+      items = ema_items, 
+      rt_items = rt_ema_items
+    )
+  )
+)
+
+
+```
+
+
+Calculate them all: 
+
+```{r calc-indices}
+# calculate all indices
+indices <- index_functions |>
+  purrr::map(
+    .f = function(x) {
+      do.call(x$func, c(list(data = subset_data), x$args))
+    }
+  )
+
+# combine indices
+df_indices <- indices |>
+  purrr::reduce(
+    .f = function(x, y) {
+      x |>
+        left_join(y, by = c("external_id", "counter"))
+    }
+  ) |> 
+  dplyr::mutate(mode_pct = if_else(is.nan(mode_pct), NA, mode_pct))
+```
+
+
+
+# Visualizations
+
+
+
+
+
+
+
+# Session Info
+
+```{r session-info}
+pander::pander(sessionInfo())
+
+```
+

@@ -1,0 +1,96 @@
+---
+title: "Careless Responding"
+subtitle: "Title of your Analysis"
+author: 
+ - name: Björn S. Siepe
+   orcid: 0000-0002-9558-4648
+   affiliations: University of Marburg
+ - name: Add name(s) of person(s) responsible for respective file
+   orcid: 0000-0002-9558-4648
+   affiliations: to be added
+date: "`r Sys.Date()`"
+format:
+  html:
+    toc: true
+    number-sections: true
+    theme: cosmo
+    code-fold: true
+    code-tools: true
+    code-summary: "Show the code"
+    fig-width: 7
+    fig-height: 4.5
+    fig-align: "center"
+    embed-resources: true
+execute:
+  message: false
+  warning: false
+  eval: true # run code?
+---
+
+# Background
+You can explain your analyses here. 
+
+
+We first load all relevant packages: 
+```{r packages}
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load("dplyr", "tidyr", "here", "ggplot2")  
+  
+set.seed(35032)  
+```
+
+
+Some good practice: 
+
+-  when loading data, use the `here::here()` function to avoid (a) absolute paths and (b) issues with different usage of '/' and '\\' across systems:
+
+```{r, eval = FALSE}
+data <- readRDS(here::here("data", "cleaned_data", "data.RDS"))
+```
+
+
+
+# Data Preparation
+
+This section should contain all relevant preprocessing you need to do for your analyses. 
+```{r data-preparation}
+# code for data cleaning etc.
+```
+
+
+
+# Analysis
+
+You can create multiple subsections for your analyses. 
+
+## Analysis 1
+
+## Analysis 2
+
+Just including a mock plot here to show how it would look like within a .qmd: 
+```{r data-analysis}
+# code for analyses
+
+# create a mock plot to illustrate how this would look in quarto:
+data <- rnorm(10000)
+
+data |> 
+  as.data.frame() |> 
+  ggplot(aes(x = data)) + 
+  geom_density() + 
+  theme_classic()
+```
+
+
+
+
+# Obtain standard R script
+
+We can also obtain a standard `.R` script from this document by running the following code (assuming there is a folder called `\scripts\`): 
+
+```{r purl-script, eval = FALSE}
+knitr::purl(here::here("scripts", "title_of_your_script.qmd"), 
+            output = here::here("scripts", "title_of_your_script.R"),
+            documentation = 2)
+```
+
