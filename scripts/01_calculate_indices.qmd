@@ -62,7 +62,7 @@ data <- data |>
 
 Relevant EMA items and their reaction times: 
 ```{r ema-itemss}
-ema_items <-  c("sad_d", "stressed_d", "overwhelm_d", "nervous_d", "ruminate_d", "irritable_d", "tired_d", "cheerful_d", "motivated_d", "relaxed_d")
+ema_items <-  c("sad_d", "stressed_d", "overwhelm_d", "nervous_d", "ruminate_d", "irritable_d", "cheerful_d", "motivated_d", "relaxed_d")
 rt_ema_items <- paste0("rt_", ema_items)
 
 ```
