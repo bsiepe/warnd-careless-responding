@@ -1,6 +1,6 @@
 ---
 title: "Careless Responding"
-subtitle: "Title of your Analysis"
+subtitle: "Calculating Indices"
 author: 
  - name: Björn S. Siepe
    orcid: 0000-0002-9558-4648
@@ -32,14 +32,19 @@ In this file, we will compute all indices of careless responding. We aim for the
 `external_id`, `counter`, `index`. There should be no implicit missingness. 
 
 TODOS:
-- We should maybe return 0 for the within-assessment-SD instead of NA when there is no variability at all. 
+
+    - Check the warnings for mahalanobis
+    
+    - We should maybe return 0 for the within-assessment-SD instead of NA when there is no variability at all. 
+     
+    - use `ggbreak` to display large integer values in synonym and antonym violation.
 
 
 We first load all relevant packages: 
 ```{r packages}
 if(!require(pacman)) install.packages("pacman")
 pacman::p_load("dplyr", "tidyr", "here", "ggplot2", "rrcov", "Hmisc", "sysfonts", "showtext", 
-               "ggh4x")  
+               "ggh4x", "cowplot", "gtsummary", "gt")  
 
 source(here("scripts", "00_functions.R"))
   
@@ -65,18 +70,25 @@ rt_ema_items <- paste0("rt_", ema_items)
 
 # Data Preparation
 
-We first subset the data for testing the functions on a smaller dataframe: 
+We first subset the data for testing the functions on a smaller dataframe of 30 individuals:
 
-```{r subset-data}
-# select 10 individuals at random
+```{r subset-data, eval = FALSE}
+# select 30 individuals at random
 ids_to_subset <- data |> 
   distinct(external_id) |> 
-  slice_sample(n = 10) |> 
+  slice_sample(n = 30) |> 
   pull(external_id)
 
 
 subset_data <- data |> 
   filter(external_id %in% ids_to_subset)
+
+saveRDS(subset_data, file = here::here("data", "indices_experiment_data.RDS"))
+
+```
+
+```{r, include = FALSE}
+subset_data <- readRDS(here::here("data", "indices_experiment_data.RDS"))
 ```
 
 
@@ -145,7 +157,7 @@ index_functions <- list(
 
 Calculate them all: 
 
-```{r calc-indices}
+```{r calc-indices, message=FALSE}
 # calculate all indices
 indices <- index_functions |>
   purrr::map(
@@ -162,12 +174,33 @@ df_indices <- indices |>
         left_join(y, by = c("external_id", "counter"))
     }
   ) |> 
-  dplyr::mutate(mode_pct = if_else(is.nan(mode_pct), NA, mode_pct))
+  dplyr::mutate(mode_pct = if_else(is.nan(mode_pct), NA, mode_pct)) |> 
+  dplyr::rename(k_values = kValues)
+```
+
+For now, we also convert longstring and mode proportions to absolute numbers:
+```{r}
+df_indices <- df_indices |> 
+  mutate(longstring_proportion = as.integer(longstring_proportion * length(ema_items)),
+         mode_pct = as.integer(mode_pct * length(ema_items)))
 ```
 
 
 
-# Visualizations
+# Descriptives & Visualizations
+
+## Summary statistics
+
+Numbers in parentheses represent first and third quartile. 
+```{r}
+gtsummary::tbl_summary(df_indices,
+                       include = !c(external_id, counter),
+                       missing_text = "(Missing)") |> 
+  gtsummary::as_gt() |> 
+  gt::tab_source_note(gt::md("*Only based on a subset of the full sample.*"))
+```
+
+
 
 ## Large grid plot with all indices
 
@@ -180,28 +213,58 @@ We first create a plot for all integer/proportion indices:
 fill_color <- "#132b69"
 
 
+# A function factory for getting integer y-axis values.
+# (https://gist.github.com/jhrcook/eb7b63cc57c683a6eb4986c4107a88ec)
+integer_breaks <- function(n = 5, ...) {
+    fxn <- function(x) {
+        breaks <- floor(pretty(x, n, ...))
+        names(breaks) <- attr(breaks, "labels")
+        breaks
+    }
+    return(fxn)
+}
+
 integer_plot <- df_indices |> 
-  select(!c(external_id, counter, kValues)) |> 
-  filter(sd_time_diff < 10) |> 
+  select(!c(external_id, counter, k_values)) |> 
   select(anto_violations, syno_violations, longstring_proportion, mode_pct) |> 
+  rename(
+    "Synonym" = "syno_violations", 
+    "Antonym" = "anto_violations",
+    "Longstring" = "longstring_proportion",
+    "Items at Mode" = "mode_pct"
+  ) |> 
   pivot_longer(cols = everything(), names_to = "index") |>
   filter(!is.na(value)) |> 
   ggplot(aes(x = value))+
   geom_bar(fill = fill_color)+
   ggh4x::facet_wrap2(.~index, 
-                     scales = "free")+
+                     scales = "free_y",
+                     axes = "all")+
   scale_y_continuous(expand = c(0,0))+
+  scale_x_continuous(breaks = 0:10)+
   theme_bs()+
   labs(x = "", 
        y = "")
+
+integer_plot
 ```
+
+
+
+
 
 Then create a plot for all continuous indices: 
 ```{r}
 cont_plot <- df_indices |> 
-  select(!c(external_id, counter, kValues)) |> 
+  select(!c(external_id, counter, k_values)) |> 
   filter(sd_time_diff < 10) |> 
   select(assessment_sd, mahalanobis_dist, robustpca_dist, sd_time_diff) |> 
+  rename(
+    "Assessment SD" = "assessment_sd",
+    "Mahalanobis" = "mahalanobis_dist",
+    "Robust PCA" = "robustpca_dist",
+    "Time SD" = "sd_time_diff"
+  ) |> 
   pivot_longer(cols = everything(), names_to = "index") |>
   filter(!is.na(value)) |> 
   ggplot(aes(x = value))+
@@ -214,11 +277,19 @@ cont_plot <- df_indices |>
   theme_bs()+
   labs(x = "", 
        y = "")
+
+cont_plot
 ```
 
 Combine the plots: 
-```{r}
+```{r, warnings = FALSE}
+combined_plot <- cowplot::plot_grid(integer_plot, cont_plot, nrow = 2)
 
+ggsave("indices_overview.pdf", 
+       plot = combined_plot, 
+       path = here::here("figures"),
+       height = 10, 
+       width = 8)
 ```
 
 
