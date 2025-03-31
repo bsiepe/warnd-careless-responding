@@ -155,7 +155,7 @@ index_functions <- list(
 ```
 
 
-Calculate them all: 
+Calculate them all on the subset:
 
 ```{r calc-indices, message=FALSE}
 # calculate all indices
@@ -184,6 +184,79 @@ df_indices <- df_indices |>
   mutate(longstring_proportion = as.integer(longstring_proportion * length(ema_items)),
          mode_pct = as.integer(mode_pct * length(ema_items)))
 ```
+
+
+
+## Full Analysis
+We split the full data set into multiple chunks for easier computation: 
+```{r}
+# get list of ids
+unique_ids <- data |> 
+  distinct(external_id) |> 
+  pull(external_id)
+
+# create chunk labels
+num_per_group <- 50
+num_groups <- ceiling(length(unique_ids) / num_per_group)
+group_labels <- rep(1:num_groups, each = num_per_group)[seq_along(unique_ids)]
+
+# map external_ids to groups
+id_groups <- data.frame(external_id = unique_ids, group = group_labels)
+data_grouped <- data |> left_join(id_groups, by = "external_id")
+
+# Split into a list of dataframes, one for each group
+data_subsets <- split(data_grouped, data_grouped$group)
+
+df_indices_list <- list()
+
+# Process each chunk
+for (i in seq(num_groups)) {
+  cat("Processing chunk", i, "of", seq(num_groups), "\n")
+  
+  # Get the current chunk
+  chunk_data <- data_subsets[[i]]
+  
+  # Calculate indices for the current chunk
+  indices <- index_functions |>
+    purrr::map(
+      .f = function(x) {
+        do.call(x$func, c(list(data = chunk_data), x$args))
+      }
+    )
+  
+  # Combine indices for the current chunk
+  chunk_indices <- indices |>
+    purrr::reduce(
+      .f = function(x, y) {
+        x |>
+          left_join(y, by = c("external_id", "counter"))
+      }
+    ) |>
+    dplyr::mutate(mode_pct = if_else(is.nan(mode_pct), NA, mode_pct)) |>
+    dplyr::rename(k_values = kValues)
+  
+  # Convert proportions to absolute numbers
+  chunk_indices <- chunk_indices |>
+    mutate(longstring_proportion = as.integer(longstring_proportion * length(ema_items)),
+           mode_pct = as.integer(mode_pct * length(ema_items)))
+  
+  # Append the chunk results to the list
+  df_indices_list[[i]] <- chunk_indices
+}
+
+# Combine all chunk results
+df_indices <- df_indices_list |>
+  purrr::reduce(
+    .f = function(x, y) {
+      x |>
+        bind_rows(y, .id = "chunk_id")
+    }
+  )
+
+# save results
+saveRDS(df_indices, file = here::here("output", "df_indices.RDS"))
+```
+
 
 
 
