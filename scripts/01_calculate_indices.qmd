@@ -25,6 +25,8 @@ execute:
   message: false
   warning: false
   eval: true # run code?
+params:
+  rerun: false  # define parameter if all large analyses should be rerun
 ---
 
 # Background
@@ -38,6 +40,8 @@ TODOS:
     - We should maybe return 0 for the within-assessment-SD instead of NA when there is no variability at all. 
      
     - use `ggbreak` to display large integer values in synonym and antonym violation.
+    
+    - anto_violations has values exceeding 10, how does this happen?
 
 
 We first load all relevant packages: 
@@ -54,6 +58,7 @@ set.seed(35032)
 
 We load the data and remove all non-EMA prompts. Insert your dataset in the subfolder `/data/` and load it here. 
 ```{r read-data}
+#| eval: !expr params$rerun
 data <- read.csv(here::here("data", "WARND_stage2_c1234_trainingset_before_30min_v2024_07_16.csv"))
 
 data <- data |> 
@@ -73,6 +78,7 @@ rt_ema_items <- paste0("rt_", ema_items)
 We first subset the data for testing the functions on a smaller dataframe of 30 individuals:
 
 ```{r subset-data, eval = FALSE}
+#| eval: !expr params$rerun
 # select 30 individuals at random
 ids_to_subset <- data |> 
   distinct(external_id) |> 
@@ -95,7 +101,7 @@ subset_data <- readRDS(here::here("data", "indices_experiment_data.RDS"))
 
 # Analysis
 
-Currently, this still depends on `sd_within_assessment` being the first, to have no implicit missingness when using `left_join()` later below.
+Currently, this depends on `sd_within_assessment` being the first, to have no implicit missingness when using `left_join()` later below.
 ```{r}
 # Define the functions and their parameters
 index_functions <- list(
@@ -158,6 +164,7 @@ index_functions <- list(
 Calculate them all on the subset:
 
 ```{r calc-indices, message=FALSE}
+#| eval: !expr params$rerun
 # calculate all indices
 indices <- index_functions |>
   purrr::map(
@@ -180,6 +187,7 @@ df_indices <- indices |>
 
 For now, we also convert longstring and mode proportions to absolute numbers:
 ```{r}
+#| eval: !expr params$rerun
 df_indices <- df_indices |> 
   mutate(longstring_proportion = as.integer(longstring_proportion * length(ema_items)),
          mode_pct = as.integer(mode_pct * length(ema_items)))
@@ -190,6 +198,7 @@ df_indices <- df_indices |>
 ## Full Analysis
 We split the full data set into multiple chunks for easier computation: 
 ```{r}
+#| eval: !expr params$rerun
 # get list of ids
 unique_ids <- data |> 
   distinct(external_id) |> 
@@ -257,6 +266,12 @@ df_indices <- df_indices_list |>
 saveRDS(df_indices, file = here::here("output", "df_indices.RDS"))
 ```
 
+Read back in: 
+```{r}
+df_indices <- readRDS(file = here::here("output", "df_indices.RDS"))
+```
+
+
 
 
 
@@ -264,14 +279,36 @@ saveRDS(df_indices, file = here::here("output", "df_indices.RDS"))
 
 ## Summary statistics
 
+
 Numbers in parentheses represent first and third quartile. 
 ```{r}
-gtsummary::tbl_summary(df_indices,
-                       include = !c(external_id, counter),
+df_indices |>   
+  mutate(k_values = as.factor(k_values), 
+         syno_violations = as.factor(syno_violations), 
+         anto_violations = as.factor(anto_violations), 
+         longstring_proportion = as.factor(longstring_proportion)) |> 
+  select(!chunk_id) |> 
+  gtsummary::tbl_summary(include = !c(external_id, counter),
                        missing_text = "(Missing)") |> 
-  gtsummary::as_gt() |> 
-  gt::tab_source_note(gt::md("*Only based on a subset of the full sample.*"))
+  gtsummary::as_gt()
 ```
+
+
+## Investigate very large values
+
+There are antonym violation values that exceed 10. Investigate: 
+```{r}
+large_anto <- df_indices |> 
+  filter(anto_violations > 10) |> 
+  slice_max(anto_violations) |> 
+  pull(external_id)
+
+data |> 
+  filter(external_id == large_anto) |> 
+  View()
+
+```
+
 
 
 
@@ -318,11 +355,34 @@ integer_plot <- df_indices |>
   theme_bs()+
   labs(x = "", 
        y = "")
-
-integer_plot
 ```
 
-
+Alternatively, convert the plot to percentages: 
+```{r}
+integer_plot_pct <- df_indices |> 
+  select(!c(external_id, counter, k_values)) |> 
+  select(anto_violations, syno_violations, longstring_proportion, mode_pct) |> 
+  rename(
+    "Synonym" = "syno_violations", 
+    "Antonym" = "anto_violations",
+    "Longstring" = "longstring_proportion",
+    "Items at Mode" = "mode_pct"
+  ) |> 
+  pivot_longer(cols = everything(), names_to = "index") |>
+  filter(!is.na(value)) |> 
+  ggplot(aes(x = value, y = after_stat(prop))) +  # for percentage
+  geom_bar(fill = fill_color) +
+  ggh4x::facet_wrap2(.~index, 
+                     scales = "free_y",
+                     axes = "all") +
+  scale_y_continuous(expand = c(0,0), labels = scales::percent_format()) +  
+  scale_x_continuous(breaks = 0:11, expand = c(0, 0), limits = c(-.6,11.1)) +
+  theme_bs() +
+  labs(x = "", 
+       y = "Percentage",
+       caption = "Removed some small values")  
+integer_plot_pct
+```
 
 
 
@@ -356,7 +416,7 @@ cont_plot
 
 Combine the plots: 
 ```{r, warnings = FALSE}
-combined_plot <- cowplot::plot_grid(integer_plot, cont_plot, nrow = 2)
+combined_plot <- cowplot::plot_grid(integer_plot_pct, cont_plot, nrow = 2)
 
 ggsave("indices_overview.pdf", 
        plot = combined_plot, 
