@@ -270,8 +270,8 @@ calc_psychometric_antonym_violations <- function(data,
     df.temp <- question_data |> 
       dplyr::select(as.character(antonym_pairs[row, 1]), as.character(antonym_pairs[row, 2]))
     
-    # Check if both items score above the threshold
-    psychometric.antonym.count[, row] <- df.temp[, 1] > antonym_maxvalue_threshold & df.temp[, 2] > antonym_maxvalue_threshold
+    # Check if difference is above the threshold
+    psychometric.antonym.count[, row] <- abs(df.temp[, 1] - df.temp[, 2]) > antonym_maxvalue_threshold
   }
   
   psychometric.antonym.count <- cbind(question_data$external_id, question_data$counter, # Bind id, counter, and antonym violation counts
