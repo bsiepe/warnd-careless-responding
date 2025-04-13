@@ -133,7 +133,7 @@ calc_indicator_rob_PCA_orthogonal_distance <- function(data, items) {
     if (nrow(question_data) > 1) { # Check if enough data remains
       # Use tryCatch to handle potential errors during PcaHubert
       tryCatch({
-        output <- PcaHubert(question_data, kmax = 15)
+        output <- PcaHubert(question_data, kmax = length(items))
         
         # Fill in distances and kValues
         distances <- output$od
@@ -226,9 +226,12 @@ calc_psychometric_synonym_violations <- function(data,
 
 
 # Psychometric antonym violation ------------------------------------------
+# flag_type: can be "abs_diff" for absolute difference or "raw_value" for two elevated values
+
 calc_psychometric_antonym_violations <- function(data, 
                                                  items, 
                                                  cor_threshold, 
+                                                 flag_type = "raw_value",
                                                  antonym_maxvalue_threshold) {
   ## Select relevant data to calculate correlations on
   question_data <- data |>
@@ -270,8 +273,14 @@ calc_psychometric_antonym_violations <- function(data,
     df.temp <- question_data |> 
       dplyr::select(as.character(antonym_pairs[row, 1]), as.character(antonym_pairs[row, 2]))
     
-    # Check if difference is above the threshold
-    psychometric.antonym.count[, row] <- abs(df.temp[, 1] - df.temp[, 2]) > antonym_maxvalue_threshold
+    if(flag_type == "abs_diff"){
+      # Check if difference is above the threshold
+      psychometric.antonym.count[, row] <- abs(df.temp[, 1] - df.temp[, 2]) > antonym_maxvalue_threshold
+    } 
+    else if(flag_type == "raw_value"){
+      psychometric.antonym.count[, row] <- df.temp[, 1] > antonym_maxvalue_threshold & df.temp[, 2] > antonym_maxvalue_threshold
+    }
+    
   }
   
   psychometric.antonym.count <- cbind(question_data$external_id, question_data$counter, # Bind id, counter, and antonym violation counts
@@ -285,9 +294,10 @@ calc_psychometric_antonym_violations <- function(data,
 
 
 # SD Response Times -------------------------------------------------------
-calc_sd_response_times <- function(data, 
-                                   items) {
-  
+calc_summary_response_times <- function(data, 
+                                        items,
+                                        summary = "sd") {
+
   # preserve identifying columns
   id_cols <- data[, c("external_id", "counter")]
   
@@ -304,15 +314,21 @@ calc_sd_response_times <- function(data,
   
   time_diffs_df <- as.data.frame(time_diffs)
   
-  # SDs of time differences for each respondent
-  sd_time_diff <- apply(time_diffs_df, 1, sd)
+  if(summary == "sd"){
+    summary_time_diff <- apply(time_diffs_df, 1, sd)
+  } else if(summary == "mean"){
+    summary_time_diff <- apply(time_diffs_df, 1, mean)
+  }
+
+  df_summary_time_diff <- data.frame(id_cols, summary_time_diff)
   
-  df_sd_time_diff <- data.frame(id_cols, sd_time_diff)
-  
-  
-  # Return the final result
-  return(df_sd_time_diff)
+  return(df_summary_time_diff)
 }
+
+
+
+# Time per item -----------------------------------------------------------
+
 
 
 
