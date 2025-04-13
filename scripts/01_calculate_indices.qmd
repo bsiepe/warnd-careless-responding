@@ -41,7 +41,6 @@ TODOS:
      
     - use `ggbreak` to display large integer values in synonym and antonym violation.
     
-    - anto_violations has values exceeding 10, how does this happen?
 
 
 We first load all relevant packages: 
@@ -136,9 +135,13 @@ index_functions <- list(
       antonym_maxvalue_threshold = 5
     )
   ),
+  mean_response_times = list(
+    func = calc_summary_response_times,
+    args = list(items = rt_ema_items, summary = "mean")
+  ),
   sd_response_times = list(
-    func = calc_sd_response_times,
-    args = list(items = rt_ema_items)
+    func = calc_summary_response_times,
+    args = list(items = rt_ema_items, summary = "sd")
   ),
 
   items_at_mode = list(
@@ -195,7 +198,7 @@ df_indices <- df_indices |>
 
 
 
-## Full Analysis
+## Full Analysis Individual Indices
 We split the full data set into multiple chunks for easier computation: 
 ```{r}
 #| eval: !expr params$rerun
@@ -218,6 +221,7 @@ data_subsets <- split(data_grouped, data_grouped$group)
 
 df_indices_list <- list()
 
+time_before <- Sys.time()
 # Process each chunk
 for (i in seq(num_groups)) {
   cat("Processing chunk", i, "of", seq(num_groups), "\n")
@@ -253,6 +257,9 @@ for (i in seq(num_groups)) {
   df_indices_list[[i]] <- chunk_indices
 }
 
+time_diff <- Sys.time() - time_before
+# ~30mins.
+
 # Combine all chunk results
 df_indices <- df_indices_list |>
   purrr::reduce(
@@ -269,6 +276,25 @@ saveRDS(df_indices, file = here::here("output", "df_indices.RDS"))
 Read back in: 
 ```{r}
 df_indices <- readRDS(file = here::here("output", "df_indices.RDS"))
+```
+
+
+# Multiverse Indices
+
+Here, we investigate different settings to detect careless responding. These concern: 
+1. Different cutoffs for individual indices
+2. Different combination rules for multiple indices
+
+We define a grid of different cutoffs: 
+
+```{r}
+
+```
+
+
+We then define different combination rules that we will apply to this grid: 
+```{r}
+
 ```
 
 
