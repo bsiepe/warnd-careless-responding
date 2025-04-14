@@ -116,7 +116,6 @@ calc_indicator_mahalanobis <- function(data, items) {
 # Robust PCA --------------------------------------------------------------
 calc_indicator_rob_PCA_orthogonal_distance <- function(data, items) {
   ## Note: The robust PCA calculates the optimal number of principal components to compute for every participants
-  ## I'm currently not sure if the values can be compared between participants, as it could impact the size of the orthogonal distance
   robustpca.results <- do.call(rbind, lapply(split(data, data$external_id), function(df) {
     # Select the relevant question columns and convert to matrix
     question_data <- df |>
@@ -129,7 +128,7 @@ calc_indicator_rob_PCA_orthogonal_distance <- function(data, items) {
     distances <- rep(NA, nrow(question_data))
     kValues <- rep(NA, nrow(question_data))
     
-
+    
     if (nrow(question_data) > 1) { # Check if enough data remains
       # Use tryCatch to handle potential errors during PcaHubert
       tryCatch({
@@ -143,6 +142,7 @@ calc_indicator_rob_PCA_orthogonal_distance <- function(data, items) {
         message("Error in PcaHubert calculation for external_id: ", unique(df$external_id), " - Replacing with NA")
         # NAs are already in place, so no need to modify distances/kValues
       })
+      
     }
     
     # Store results
@@ -230,10 +230,15 @@ calc_psychometric_synonym_violations <- function(data,
 
 calc_psychometric_antonym_violations <- function(data, 
                                                  items, 
-                                                 cor_threshold, 
+                                                 antonym_pair = NULL,
+                                                 cor_threshold = NULL, 
                                                  flag_type = "raw_value",
                                                  antonym_maxvalue_threshold) {
-  ## Select relevant data to calculate correlations on
+  # if antonym_pair is a vector, convert to dataframe
+  if(is.vector(antonym_pair)){
+    antonym_pair <- data.frame(word1 = antonym_pair[1], word2 = antonym_pair[2])
+  }
+  ## select relevant data to calculate correlations on
   question_data <- data |>
     dplyr::select(external_id, counter, dplyr::all_of(items)) |>
     dplyr::mutate(dplyr::across(dplyr::all_of(items), as.numeric)) |> # Ensure numeric data
@@ -241,37 +246,47 @@ calc_psychometric_antonym_violations <- function(data,
   
   n_question_cols <- ncol(question_data)
   
-  ## Calculate correlations
-  corr.temp <- rcorr(question_data |> 
-                       dplyr::select(3:n_question_cols) |> 
-                       data.matrix(), type = 'spearman') # Correlation matrix
-  
-  flattenCorrMatrix <- function(corrmat, pmat) { # Flatten the correlation matrix
-    ut <- upper.tri(corrmat)
-    data.frame(
-      row = rownames(corrmat)[row(corrmat)[ut]],
-      column = rownames(corrmat)[col(corrmat)[ut]],
-      cor  =(corrmat)[ut],
-      p = pmat[ut]
-    )
+  ## Calculate correlations if antonym_pairs is not provided
+  if (is.null(antonym_pair)) {
+    ## Calculate correlations
+    corr.temp <- rcorr(question_data |>
+                         dplyr::select(3:n_question_cols) |>
+                         data.matrix(),
+                       type = 'spearman') # Correlation matrix
+    
+    flattenCorrMatrix <- function(corrmat, pmat) {
+      # Flatten the correlation matrix
+      ut <- upper.tri(corrmat)
+      data.frame(
+        row = rownames(corrmat)[row(corrmat)[ut]],
+        column = rownames(corrmat)[col(corrmat)[ut]],
+        cor  = (corrmat)[ut],
+        p = pmat[ut]
+      )
+    }
+    corr.temp <- flattenCorrMatrix(corr.temp$r, corr.temp$P) |>
+      dplyr::arrange(cor)
+    
+    ## Filter correlations that reach cut-off to be considered antonyms
+    antonym_pair <- corr.temp |>
+      dplyr::filter(cor <= cor_threshold) |>
+      dplyr::rename('word1' = row , 'word2' = column) |>
+      dplyr::select(1:2)
+  } else {
+    ## Ensure antonym_pairs is in the correct format
+    if (!is.data.frame(antonym_pair) |
+        !(all(c("word1", "word2") %in% colnames(antonym_pair)))) {
+      stop("antonym_pair must be a dataframe with columns 'word1' and 'word2'")
+    }
   }
-  corr.temp <- flattenCorrMatrix(corr.temp$r, corr.temp$P) |> 
-    dplyr::arrange(cor)
-  
-  ## Filter correlations that reach cut-off to be considered antonyms
-  antonym_pairs <- corr.temp |> 
-    dplyr::filter(cor <= cor_threshold) |>
-    dplyr::rename('word1' = row ,
-           'word2' = column) |>
-    dplyr::select(1:2)
   
   ## Calculate violations per row
-  psychometric.antonym.count <- matrix(nrow = nrow(question_data), ncol = nrow(antonym_pairs)) # Create empty matrix to fill
+  psychometric.antonym.count <- matrix(nrow = nrow(question_data), ncol = nrow(antonym_pair)) # Create empty matrix to fill
   
-  for (row in 1:nrow(antonym_pairs)){ # Loop over pairs
+  for (row in 1:nrow(antonym_pair)){ # Loop over pairs
     # Select two synonym items from the relevant response data
     df.temp <- question_data |> 
-      dplyr::select(as.character(antonym_pairs[row, 1]), as.character(antonym_pairs[row, 2]))
+      dplyr::select(as.character(antonym_pair[row, 1]), as.character(antonym_pair[row, 2]))
     
     if(flag_type == "abs_diff"){
       # Check if difference is above the threshold
