@@ -315,19 +315,17 @@ calc_summary_response_times <- function(data,
   time_diffs_df <- as.data.frame(time_diffs)
   
   if(summary == "sd"){
-    summary_time_diff <- apply(time_diffs_df, 1, sd)
+    sd_time_diff <- apply(time_diffs_df, 1, sd)
+    df_summary_time_diff <- data.frame(id_cols, sd_time_diff)
   } else if(summary == "mean"){
-    summary_time_diff <- apply(time_diffs_df, 1, mean)
+    mean_time_diff <- apply(time_diffs_df, 1, mean)
+    df_summary_time_diff <- data.frame(id_cols, mean_time_diff)
   }
-
-  df_summary_time_diff <- data.frame(id_cols, summary_time_diff)
   
   return(df_summary_time_diff)
 }
 
 
-
-# Time per item -----------------------------------------------------------
 
 
 
