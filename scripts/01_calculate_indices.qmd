@@ -130,7 +130,7 @@ index_functions <- list(
       items = ema_items,
       antonym_pair = c("stressed_d", "relaxed_d"),
       # cor_threshold = 0.45,
-      antonym_maxvalue_threshold = 5
+      antonym_maxvalue_threshold = 4
     )
   ),
   mean_response_times = list(
