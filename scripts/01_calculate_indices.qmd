@@ -35,12 +35,8 @@ In this file, we will compute all indices of careless responding. We aim for the
 
 TODOS:
 
-    - Check the warnings for mahalanobis
-    
     - We should maybe return 0 for the within-assessment-SD instead of NA when there is no variability at all. 
-     
-    - use `ggbreak` to display large integer values in synonym and antonym violation.
-    
+
 
 
 We first load all relevant packages: 
@@ -119,19 +115,21 @@ index_functions <- list(
     func = calc_indicator_rob_PCA_orthogonal_distance,
     args = list(items = ema_items)
   ),
-  psychometric_syntonym = list(
-    func = calc_psychometric_synonym_violations,
-    args = list(
-      items = ema_items,
-      cor_threshold = 0.45,
-      synonym_difference_threshold = 5
-    )
-  ),
+  # leave out synonym for now
+  # psychometric_syntonym = list(
+  #   func = calc_psychometric_synonym_violations,
+  #   args = list(
+  #     items = ema_items,
+  #     cor_threshold = 0.45,
+  #     synonym_difference_threshold = 5
+  #   )
+  # ),
   psychometric_antonym = list(
     func = calc_psychometric_antonym_violations,
     args = list(
       items = ema_items,
-      cor_threshold = 0.45,
+      antonym_pair = c("stressed_d", "relaxed_d"),
+      # cor_threshold = 0.45,
       antonym_maxvalue_threshold = 5
     )
   ),
@@ -193,7 +191,7 @@ For now, we also convert longstring and mode proportions to absolute numbers:
 #| eval: !expr params$rerun
 df_indices <- df_indices |> 
   mutate(longstring_proportion = as.integer(longstring_proportion * length(ema_items)),
-         mode_pct = as.integer(mode_pct * length(ema_items)))
+         mode_prop = as.integer(mode_pct * length(ema_items)))
 ```
 
 
@@ -224,7 +222,7 @@ df_indices_list <- list()
 time_before <- Sys.time()
 # Process each chunk
 for (i in seq(num_groups)) {
-  cat("Processing chunk", i, "of", seq(num_groups), "\n")
+  cat("Processing chunk", i, "of", num_groups, "\n")
   
   # Get the current chunk
   chunk_data <- data_subsets[[i]]
@@ -251,7 +249,7 @@ for (i in seq(num_groups)) {
   # Convert proportions to absolute numbers
   chunk_indices <- chunk_indices |>
     mutate(longstring_proportion = as.integer(longstring_proportion * length(ema_items)),
-           mode_pct = as.integer(mode_pct * length(ema_items)))
+           mode_prop = as.integer(mode_pct * length(ema_items)))
   
   # Append the chunk results to the list
   df_indices_list[[i]] <- chunk_indices
@@ -282,22 +280,43 @@ df_indices <- readRDS(file = here::here("output", "df_indices.RDS"))
 # Multiverse Indices
 
 Here, we investigate different settings to detect careless responding. These concern: 
-1. Different cutoffs for individual indices
+1. Different cutoffs and settings for individual indices
 2. Different combination rules for multiple indices
 
-We define a grid of different cutoffs: 
+We define a grid of different cutoffs and settings. These are sham values for now to check computation. 
 
+```{r specifications}
+sd_within_cutoff <- c(0.6, 1)
+mean_rt_cutoff <- c(0.5, 1)
+sd_rt_cutoff <- c(0.5, 1)
+longstring_cutoff <- c(7, 8)
+synonym_cutoff <- c(1,2)
+antonym_cutoff <- c(1,2)
+mode_cutoff <- c(4,5)
+
+specification_grid <- expand.grid(
+  sd_within_cutoff, 
+  mean_rt_cutoff, 
+  sd_rt_cutoff,
+  longstring_cutoff, 
+  synonym_cutoff, 
+  antonym_cutoff
+)
+
+```
+
+We then compute the multiverse:
 ```{r}
 
 ```
 
 
-We then define different combination rules that we will apply to this grid: 
+
+
+Apply different combination rules for multiple indices: 
 ```{r}
 
 ```
-
-
 
 
 
@@ -310,7 +329,7 @@ Numbers in parentheses represent first and third quartile.
 ```{r}
 df_indices |>   
   mutate(k_values = as.factor(k_values), 
-         syno_violations = as.factor(syno_violations), 
+         # syno_violations = as.factor(syno_violations), 
          anto_violations = as.factor(anto_violations), 
          longstring_proportion = as.factor(longstring_proportion)) |> 
   select(!chunk_id) |> 
@@ -324,14 +343,14 @@ df_indices |>
 
 There are antonym violation values that exceed 10. Investigate: 
 ```{r}
-large_anto <- df_indices |> 
-  filter(anto_violations > 10) |> 
-  slice_max(anto_violations) |> 
-  pull(external_id)
-
-data |> 
-  filter(external_id == large_anto) |> 
-  View()
+# large_anto <- df_indices |> 
+#   filter(anto_violations > 10) |> 
+#   slice_max(anto_violations) |> 
+#   pull(external_id)
+# 
+# data |> 
+#   filter(external_id == large_anto) |> 
+#   View()
 
 ```
 
@@ -360,53 +379,56 @@ integer_breaks <- function(n = 5, ...) {
     return(fxn)
 }
 
-integer_plot <- df_indices |> 
-  select(!c(external_id, counter, k_values)) |> 
-  select(anto_violations, syno_violations, longstring_proportion, mode_pct) |> 
+integer_plot <- df_indices |>
+  select(!c(external_id, counter, k_values)) |>
+  select(anto_violations,
+         # syno_violations,
+         longstring_proportion,
+         mode_prop) |>
   rename(
-    "Synonym" = "syno_violations", 
+    # "Synonym" = "syno_violations",
     "Antonym" = "anto_violations",
     "Longstring" = "longstring_proportion",
-    "Items at Mode" = "mode_pct"
-  ) |> 
+    "Items at Mode" = "mode_prop"
+  ) |>
   pivot_longer(cols = everything(), names_to = "index") |>
-  filter(!is.na(value)) |> 
-  ggplot(aes(x = value))+
-  geom_bar(fill = fill_color)+
-  ggh4x::facet_wrap2(.~index, 
-                     scales = "free_y",
-                     axes = "all")+
-  scale_y_continuous(expand = c(0,0))+
-  scale_x_continuous(breaks = 0:10)+
-  theme_bs()+
-  labs(x = "", 
-       y = "")
+  filter(!is.na(value)) |>
+  ggplot(aes(x = value)) +
+  geom_bar(fill = fill_color) +
+  ggh4x::facet_wrap2(. ~ index, scales = "free_y", axes = "all") +
+  scale_y_continuous(expand = c(0, 0)) +
+  scale_x_continuous(breaks = 0:10) +
+  theme_bs() +
+  labs(x = "", y = "")
 ```
 
 Alternatively, convert the plot to percentages: 
 ```{r}
-integer_plot_pct <- df_indices |> 
-  select(!c(external_id, counter, k_values)) |> 
-  select(anto_violations, syno_violations, longstring_proportion, mode_pct) |> 
+integer_plot_pct <- df_indices |>
+  select(!c(external_id, counter, k_values)) |>
+  select(anto_violations,
+         # syno_violations,
+         longstring_proportion,
+         mode_prop) |>
   rename(
-    "Synonym" = "syno_violations", 
+    # "Synonym" = "syno_violations",
     "Antonym" = "anto_violations",
     "Longstring" = "longstring_proportion",
-    "Items at Mode" = "mode_pct"
-  ) |> 
+    "Items at Mode" = "mode_prop"
+  ) |>
   pivot_longer(cols = everything(), names_to = "index") |>
-  filter(!is.na(value)) |> 
+  filter(!is.na(value)) |>
   ggplot(aes(x = value, y = after_stat(prop))) +  # for percentage
   geom_bar(fill = fill_color) +
-  ggh4x::facet_wrap2(.~index, 
-                     scales = "free_y",
-                     axes = "all") +
-  scale_y_continuous(expand = c(0,0), labels = scales::percent_format()) +  
-  scale_x_continuous(breaks = 0:11, expand = c(0, 0), limits = c(-.6,11.1)) +
+  ggh4x::facet_wrap2(. ~ index, scales = "free_y", axes = "all") +
+  scale_y_continuous(expand = c(0, 0), labels = scales::percent_format()) +
+  scale_x_continuous(
+    breaks = 0:11,
+    expand = c(0, 0),
+    limits = c(-.6, 11.1)
+  ) +
   theme_bs() +
-  labs(x = "", 
-       y = "Percentage",
-       caption = "Removed some small values")  
+  labs(x = "", y = "Percentage", caption = "Removed some small values")
 integer_plot_pct
 ```
 
@@ -414,28 +436,33 @@ integer_plot_pct
 
 Then create a plot for all continuous indices: 
 ```{r}
-cont_plot <- df_indices |> 
-  select(!c(external_id, counter, k_values)) |> 
-  filter(sd_time_diff < 10) |> 
-  select(assessment_sd, mahalanobis_dist, robustpca_dist, sd_time_diff) |> 
+cont_plot <- df_indices |>
+  select(!c(external_id, counter, k_values)) |>
+  filter(sd_time_diff < 10) |>
+  select(assessment_sd,
+         mahalanobis_dist,
+         robustpca_dist,
+         mean_time_diff,
+         sd_time_diff,
+  ) |>
   rename(
     "Assessment SD" = "assessment_sd",
     "Mahalanobis" = "mahalanobis_dist",
     "Robust PCA" = "robustpca_dist",
+    "Time Mean" = "mean_time_diff",
     "Time SD" = "sd_time_diff"
-  ) |> 
+  ) |>
   pivot_longer(cols = everything(), names_to = "index") |>
-  filter(!is.na(value)) |> 
-  ggplot(aes(x = value))+
-  geom_density(fill = fill_color, color = fill_color,
-              # use finer bandwidth
-               adjust = 1/4)+
-  ggh4x::facet_wrap2(.~index, 
-                     scales = "free")+
-  scale_y_continuous(expand = c(0,0))+
-  theme_bs()+
-  labs(x = "", 
-       y = "")
+  filter(!is.na(value)) |>
+  ggplot(aes(x = value)) +
+  geom_density(fill = fill_color,
+               color = fill_color,
+               # use finer bandwidth
+               adjust = 1 / 4) +
+  ggh4x::facet_wrap2(. ~ index, scales = "free") +
+  scale_y_continuous(expand = c(0, 0)) +
+  theme_bs() +
+  labs(x = "", y = "")
 
 cont_plot
 ```
