@@ -190,7 +190,7 @@ For now, we also convert longstring and mode proportions to absolute numbers:
 ```{r}
 #| eval: !expr params$rerun
 df_indices <- df_indices |> 
-  mutate(longstring_proportion = as.integer(longstring_proportion * length(ema_items)),
+  mutate(longstring_prop = as.integer(longstring_proportion * length(ema_items)),
          mode_prop = as.integer(mode_pct * length(ema_items)))
 ```
 
@@ -265,7 +265,9 @@ df_indices <- df_indices_list |>
       x |>
         bind_rows(y, .id = "chunk_id")
     }
-  )
+  ) |> 
+  select(-chunk_id) |> 
+  arrange(external_id, counter)
 
 # save results
 saveRDS(df_indices, file = here::here("output", "df_indices.RDS"))
@@ -332,7 +334,6 @@ df_indices |>
          # syno_violations = as.factor(syno_violations), 
          anto_violations = as.factor(anto_violations), 
          longstring_proportion = as.factor(longstring_proportion)) |> 
-  select(!chunk_id) |> 
   gtsummary::tbl_summary(include = !c(external_id, counter),
                        missing_text = "(Missing)") |> 
   gtsummary::as_gt()
