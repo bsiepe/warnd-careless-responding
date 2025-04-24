@@ -150,7 +150,7 @@ index_functions <- list(
     )
   ),
   longstring = list(
-    func = calc_longstring_proportions, 
+    func = calc_longstring_props, 
     args = list(
       items = ema_items, 
       rt_items = rt_ema_items
@@ -190,7 +190,7 @@ For now, we also convert longstring and mode proportions to absolute numbers:
 ```{r}
 #| eval: !expr params$rerun
 df_indices <- df_indices |> 
-  mutate(longstring_prop = as.integer(longstring_proportion * length(ema_items)),
+  mutate(longstring_prop = as.integer(longstring_prop * length(ema_items)),
          mode_prop = as.integer(mode_pct * length(ema_items)))
 ```
 
@@ -248,7 +248,7 @@ for (i in seq(num_groups)) {
   
   # Convert proportions to absolute numbers
   chunk_indices <- chunk_indices |>
-    mutate(longstring_proportion = as.integer(longstring_proportion * length(ema_items)),
+    mutate(longstring_prop = as.integer(longstring_prop * length(ema_items)),
            mode_prop = as.integer(mode_pct * length(ema_items)))
   
   # Append the chunk results to the list
@@ -279,6 +279,8 @@ df_indices <- readRDS(file = here::here("output", "df_indices.RDS"))
 ```
 
 
+For the robust PCA, we used the default settings of the `rrcov` R package with a maximum number of nine principal components, corresponding to the number of items used.
+
 # Multiverse Indices
 
 Here, we investigate different settings to detect careless responding. These concern: 
@@ -288,26 +290,63 @@ Here, we investigate different settings to detect careless responding. These con
 We define a grid of different cutoffs and settings. These are sham values for now to check computation. 
 
 ```{r specifications}
-sd_within_cutoff <- c(0.6, 1)
-mean_rt_cutoff <- c(0.5, 1)
-sd_rt_cutoff <- c(0.5, 1)
-longstring_cutoff <- c(7, 8)
-synonym_cutoff <- c(1,2)
-antonym_cutoff <- c(1,2)
-mode_cutoff <- c(4,5)
+sd_within_cutoff <- c(0.75, 1, 1.25)
+mean_rt_cutoff <- c(1, 1.5, 2)
+sd_rt_cutoff <- c(0.4, 0.6, 1)
+longstring_cutoff <- c(6, 7, 8)
+mode_cutoff <- c(5, 6)
 
 specification_grid <- expand.grid(
   sd_within_cutoff, 
   mean_rt_cutoff, 
   sd_rt_cutoff,
-  longstring_cutoff, 
-  synonym_cutoff, 
-  antonym_cutoff
+  longstring_cutoff,
+  mode_cutoff
 )
+
+colnames(specification_grid) <- 
+  c(
+  "sd_within_cutoff", 
+  "mean_rt_cutoff", 
+  "sd_rt_cutoff", 
+  "longstring_cutoff", 
+  "mode_cutoff"
+)
+
+# flagging response as careless
+flag_careless <- function(df, cutoffs) {
+  df |>
+    mutate(
+      flag_sd_within = assessment_sd < cutoffs$sd_within_cutoff,
+      flag_mean_rt = mean_time_diff < cutoffs$mean_rt_cutoff,
+      flag_sd_rt = sd_time_diff < cutoffs$sd_rt_cutoff,
+      flag_longstring = longstring_prop > cutoffs$longstring_cutoff,
+      flag_mode = mode_prop > cutoffs$mode_cutoff
+    ) |>
+    mutate(spec_id = paste0("spec_", cutoffs$sd_within_cutoff, "_",
+                                      cutoffs$mean_rt_cutoff, "_",
+                                      cutoffs$sd_rt_cutoff, "_",
+                                      cutoffs$longstring_cutoff, "_",
+                                      cutoffs$mode_cutoff))
+}
+
+results_list <- purrr::pmap(specification_grid, function(sd_within_cutoff, mean_rt_cutoff,
+                                                  sd_rt_cutoff, longstring_cutoff, mode_cutoff) {
+  cutoffs <- list(
+    sd_within_cutoff = sd_within_cutoff,
+    mean_rt_cutoff = mean_rt_cutoff,
+    sd_rt_cutoff = sd_rt_cutoff,
+    longstring_cutoff = longstring_cutoff,
+    mode_cutoff = mode_cutoff
+  )
+  flag_careless(df_indices, cutoffs)
+})
+
+results_df <- bind_rows(results_list)
 
 ```
 
-We then compute the multiverse:
+We then compute the multiverse by flagging each index at each observation as being indicative of careless responding or not:
 ```{r}
 
 ```
@@ -333,7 +372,7 @@ df_indices |>
   mutate(k_values = as.factor(k_values), 
          # syno_violations = as.factor(syno_violations), 
          anto_violations = as.factor(anto_violations), 
-         longstring_proportion = as.factor(longstring_proportion)) |> 
+         longstring_prop = as.factor(longstring_prop)) |> 
   gtsummary::tbl_summary(include = !c(external_id, counter),
                        missing_text = "(Missing)") |> 
   gtsummary::as_gt()
@@ -384,12 +423,12 @@ integer_plot <- df_indices |>
   select(!c(external_id, counter, k_values)) |>
   select(anto_violations,
          # syno_violations,
-         longstring_proportion,
+         longstring_prop,
          mode_prop) |>
   rename(
     # "Synonym" = "syno_violations",
     "Antonym" = "anto_violations",
-    "Longstring" = "longstring_proportion",
+    "Longstring" = "longstring_prop",
     "Items at Mode" = "mode_prop"
   ) |>
   pivot_longer(cols = everything(), names_to = "index") |>
@@ -409,12 +448,12 @@ integer_plot_pct <- df_indices |>
   select(!c(external_id, counter, k_values)) |>
   select(anto_violations,
          # syno_violations,
-         longstring_proportion,
+         longstring_prop,
          mode_prop) |>
   rename(
     # "Synonym" = "syno_violations",
     "Antonym" = "anto_violations",
-    "Longstring" = "longstring_proportion",
+    "Longstring" = "longstring_prop",
     "Items at Mode" = "mode_prop"
   ) |>
   pivot_longer(cols = everything(), names_to = "index") |>
