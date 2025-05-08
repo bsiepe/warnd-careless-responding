@@ -346,7 +346,7 @@ calc_summary_response_times <- function(data,
 
 
 # Longstring Proportions --------------------------------------------------
-calc_longstring_proportions <- function(data,
+calc_longstring_counts <- function(data,
                                         items,
                                         rt_items){
   

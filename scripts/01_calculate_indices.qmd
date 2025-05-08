@@ -42,8 +42,8 @@ TODOS:
 We first load all relevant packages: 
 ```{r packages}
 if(!require(pacman)) install.packages("pacman")
-pacman::p_load("dplyr", "tidyr", "here", "ggplot2", "rrcov", "Hmisc", "sysfonts", "showtext", 
-               "ggh4x", "cowplot", "gtsummary", "gt")  
+pacman::p_load("here", "ggplot2", "rrcov", "Hmisc", "sysfonts", "showtext", 
+               "ggh4x", "cowplot", "gtsummary", "gt", "future", "furrr", "dplyr", "tidyr")  
 
 source(here("scripts", "00_functions.R"))
   
@@ -182,7 +182,7 @@ df_indices <- indices |>
         left_join(y, by = c("external_id", "counter"))
     }
   ) |> 
-  dplyr::mutate(mode_pct = if_else(is.nan(mode_pct), NA, mode_pct)) |> 
+  dplyr::mutate(mode_count = if_else(is.nan(mode_count), NA, mode_count)) |> 
   dplyr::rename(k_values = kValues)
 ```
 
@@ -191,7 +191,7 @@ For now, we also convert longstring and mode proportions to absolute numbers:
 #| eval: !expr params$rerun
 df_indices <- df_indices |> 
   mutate(longstring_count = as.integer(longstring_count * length(ema_items)),
-         mode_count = as.integer(mode_pct * length(ema_items)))
+         mode_count = as.integer(mode_count * length(ema_items)))
 ```
 
 
@@ -220,13 +220,15 @@ data_subsets <- split(data_grouped, data_grouped$group)
 df_indices_list <- list()
 
 time_before <- Sys.time()
+
+
 # Process each chunk
 for (i in seq(num_groups)) {
   cat("Processing chunk", i, "of", num_groups, "\n")
-  
+
   # Get the current chunk
   chunk_data <- data_subsets[[i]]
-  
+
   # Calculate indices for the current chunk
   indices <- index_functions |>
     purrr::map(
@@ -234,7 +236,7 @@ for (i in seq(num_groups)) {
         do.call(x$func, c(list(data = chunk_data), x$args))
       }
     )
-  
+
   # Combine indices for the current chunk
   chunk_indices <- indices |>
     purrr::reduce(
@@ -243,14 +245,14 @@ for (i in seq(num_groups)) {
           left_join(y, by = c("external_id", "counter"))
       }
     ) |>
-    dplyr::mutate(mode_pct = if_else(is.nan(mode_pct), NA, mode_pct)) |>
+    dplyr::mutate(mode_count = if_else(is.nan(mode_count), NA, mode_count)) |>
     dplyr::rename(k_values = kValues)
-  
+
   # Convert proportions to absolute numbers
   chunk_indices <- chunk_indices |>
     mutate(longstring_count = as.integer(longstring_count * length(ema_items)),
-           mode_count = as.integer(mode_pct * length(ema_items)))
-  
+           mode_count = as.integer(mode_count * length(ema_items)))
+
   # Append the chunk results to the list
   df_indices_list[[i]] <- chunk_indices
 }
@@ -287,7 +289,7 @@ Here, we investigate different settings to detect careless responding. These con
 1. Different cutoffs and settings for individual indices
 2. Different combination rules for multiple indices
 
-We define a grid of different cutoffs and settings. These are sham values for now to check computation. 
+We define a grid of different cutoffs and settings. 
 
 ```{r specifications}
 sd_within_cutoff <- c(0.75, 1, 1.25)
@@ -313,6 +315,12 @@ colnames(specification_grid) <-
   "mode_cutoff"
 )
 
+
+
+```
+
+We then compute the multiverse by flagging each index at each observation as being indicative of careless responding or not:
+```{r flag-careless}
 # flagging response as careless
 flag_careless <- function(df, cutoffs) {
   df |>
@@ -323,14 +331,14 @@ flag_careless <- function(df, cutoffs) {
       flag_longstring = longstring_count > cutoffs$longstring_cutoff,
       flag_mode = mode_count > cutoffs$mode_cutoff
     ) |>
-    mutate(spec_id = paste0("spec_", cutoffs$sd_within_cutoff, "_",
-                                      cutoffs$average_response_time_cutoff, "_",
-                                      cutoffs$sd_response_time_cutoff, "_",
-                                      cutoffs$longstring_cutoff, "_",
-                                      cutoffs$mode_cutoff))
+    mutate(spec_id = paste0("spec_", "sd_", cutoffs$sd_within_cutoff, "_",
+                                    "avg_rt_",  cutoffs$average_response_time_cutoff, "_",
+                                    "sd_rt_",  cutoffs$sd_response_time_cutoff, "_",
+                                    "long_",  cutoffs$longstring_cutoff, "_",
+                                    "mode_",  cutoffs$mode_cutoff))
 }
 
-results_list <- purrr::pmap(specification_grid, function(sd_within_cutoff, average_response_time_cutoff,
+careless_results_list <- purrr::pmap(specification_grid, function(sd_within_cutoff, average_response_time_cutoff,
                                                   sd_response_time_cutoff, longstring_cutoff, mode_cutoff) {
   cutoffs <- list(
     sd_within_cutoff = sd_within_cutoff,
@@ -342,20 +350,39 @@ results_list <- purrr::pmap(specification_grid, function(sd_within_cutoff, avera
   flag_careless(df_indices, cutoffs)
 })
 
-results_df <- bind_rows(results_list)
-
-```
-
-We then compute the multiverse by flagging each index at each observation as being indicative of careless responding or not:
-```{r}
-
+df_careless <- bind_rows(careless_results_list)
 ```
 
 
+We can then apply different combination rules for multiple indices. For the manuscript, we focus on our "main" specification, which is:
+
+    - Within-assessment variability: 1.0
+    - Longstring: 7/9
+    - Mode: 5/9
+    - Average response time: 1.5s
+    - SD response time: 0.6s
+    
+```{r multiple-hurdles}
+# select df of main specification
+main_id <- specification_grid |>
+  mutate(id = row_number()) |> 
+  filter(
+    sd_within_cutoff == 1.0 &
+      average_response_time_cutoff == 1.5 &
+      sd_response_time_cutoff == 0.6 &
+      longstring_cutoff == 7 & mode_cutoff == 5
+  ) |> 
+    pull(id)
 
 
-Apply different combination rules for multiple indices: 
-```{r}
+main_df <- careless_results_list[[main_id]]
+
+# apply multiple hurdle approach
+flag_df <- main_df |> 
+  dplyr::select(external_id, counter, starts_with("flag")) |> 
+  rowwise() |> 
+  mutate(flag_sum = sum(flag_sd_within, flag_average_response_time, flag_sd_response_time, flag_longstring, flag_mode, na.rm = TRUE)) 
+
 
 ```
 
@@ -378,21 +405,6 @@ df_indices |>
   gtsummary::as_gt()
 ```
 
-
-## Investigate very large values
-
-There are antonym violation values that exceed 10. Investigate: 
-```{r}
-# large_anto <- df_indices |> 
-#   filter(anto_violations > 10) |> 
-#   slice_max(anto_violations) |> 
-#   pull(external_id)
-# 
-# data |> 
-#   filter(external_id == large_anto) |> 
-#   View()
-
-```
 
 
 
@@ -420,8 +432,8 @@ integer_breaks <- function(n = 5, ...) {
 }
 
 integer_plot <- df_indices |>
-  select(!c(external_id, counter, k_values)) |>
-  select(anto_violations,
+  dplyr::select(!c(external_id, counter, k_values)) |>
+  dplyr::select(anto_violations,
          # syno_violations,
          longstring_count,
          mode_count) |>
@@ -445,8 +457,8 @@ integer_plot <- df_indices |>
 Alternatively, convert the plot to percentages: 
 ```{r}
 integer_plot_pct <- df_indices |>
-  select(!c(external_id, counter, k_values)) |>
-  select(anto_violations,
+  dplyr::select(!c(external_id, counter, k_values)) |>
+  dplyr::select(anto_violations,
          # syno_violations,
          longstring_count,
          mode_count) |>
@@ -477,9 +489,9 @@ integer_plot_pct
 Then create a plot for all continuous indices: 
 ```{r}
 cont_plot <- df_indices |>
-  select(!c(external_id, counter, k_values)) |>
+  dplyr::select(!c(external_id, counter, k_values)) |>
   filter(sd_response_time < 10) |>
-  select(assessment_sd,
+  dplyr::select(assessment_sd,
          mahalanobis_dist,
          robustpca_dist,
          average_response_time,
@@ -489,8 +501,8 @@ cont_plot <- df_indices |>
     "Assessment SD" = "assessment_sd",
     "Mahalanobis" = "mahalanobis_dist",
     "Robust PCA" = "robustpca_dist",
-    "Time Mean" = "average_response_time",
-    "Time SD" = "sd_response_time"
+    "Average RT" = "average_response_time",
+    "SD RT" = "sd_response_time"
   ) |>
   pivot_longer(cols = everything(), names_to = "index") |>
   filter(!is.na(value)) |>
@@ -519,6 +531,8 @@ ggsave("indices_overview.pdf",
 ```
 
 
+
+# Similarity Indices and Models
 
 
 
