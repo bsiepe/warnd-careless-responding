@@ -55,8 +55,8 @@ calc_mode_percentage <- function(data,
     dplyr::mutate(mode = calc_mode(dplyr::c_across(dplyr::all_of(items))),
            is_mode = mean(dplyr::c_across(dplyr::all_of(items)) == mode, na.rm = TRUE)) |>
     dplyr::ungroup() |>
-    dplyr::select({{ id_col }}, counter, mode_pct = is_mode) |> 
-    dplyr::mutate(mode_pct = if_else(is.nan(mode_pct), NA, mode_pct))
+    dplyr::select({{ id_col }}, counter, mode_count = is_mode) |> 
+    dplyr::mutate(mode_count = if_else(is.nan(mode_count), NA, mode_count))
 }
 
 
@@ -330,11 +330,11 @@ calc_summary_response_times <- function(data,
   time_diffs_df <- as.data.frame(time_diffs)
   
   if(summary == "sd"){
-    sd_time_diff <- apply(time_diffs_df, 1, sd)
-    df_summary_time_diff <- data.frame(id_cols, sd_time_diff)
+    sd_response_time <- apply(time_diffs_df, 1, sd)
+    df_summary_time_diff <- data.frame(id_cols, sd_response_time)
   } else if(summary == "mean"){
-    mean_time_diff <- apply(time_diffs_df, 1, mean)
-    df_summary_time_diff <- data.frame(id_cols, mean_time_diff)
+    average_response_time <- apply(time_diffs_df, 1, mean)
+    df_summary_time_diff <- data.frame(id_cols, average_response_time)
   }
   
   return(df_summary_time_diff)
@@ -414,7 +414,7 @@ calc_longstring_proportions <- function(data,
   proportions <- max_consecutives / ncol(ordered_responses_df)
   
   # Combine results with identifying columns
-  result <- data.frame(id_cols, longstring_proportion = proportions)
+  result <- data.frame(id_cols, longstring_count = proportions)
   
   return(result)
    
