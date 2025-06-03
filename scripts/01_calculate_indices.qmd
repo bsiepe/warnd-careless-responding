@@ -41,12 +41,31 @@ TODOS:
 
 We first load all relevant packages: 
 ```{r packages}
-if(!require(pacman)) install.packages("pacman")
-pacman::p_load("here", "ggplot2", "rrcov", "Hmisc", "sysfonts", "showtext", 
-               "ggh4x", "cowplot", "gtsummary", "gt", "future", "furrr", "dplyr", "tidyr")  
+if(!require(pacman))
+  install.packages("pacman")
+pacman::p_load(
+  "here",
+  "ggplot2",
+  "rrcov",
+  "Hmisc",
+  "sysfonts",
+  "showtext",
+  "ggh4x",
+  "cowplot",
+  "gtsummary",
+  "gt",
+  "future",
+  "furrr",
+  "dplyr",
+  "tidyr",
+  "vegan",
+  "tibble",
+  "purrr"
+)
+
 
 source(here("scripts", "00_functions.R"))
-  
+
 set.seed(35032)  
 ```
 
@@ -65,6 +84,13 @@ Relevant EMA items and their reaction times:
 ema_items <-  c("sad_d", "stressed_d", "overwhelm_d", "nervous_d", "ruminate_d", "irritable_d", "cheerful_d", "motivated_d", "relaxed_d")
 rt_ema_items <- paste0("rt_", ema_items)
 
+```
+
+
+For later visualizations, we also load the results of different model-based approaches: 
+```{r load-models}
+lpa_res <- readRDS(here::here("output", "data_profiles.RDS"))
+irt_res <- readRDS(here::here("output", "data_mixtureIRT.RDS"))
 ```
 
 
@@ -321,6 +347,7 @@ colnames(specification_grid) <-
 
 We then compute the multiverse by flagging each index at each observation as being indicative of careless responding or not:
 ```{r flag-careless}
+#| eval: !expr params$rerun
 # flagging response as careless
 flag_careless <- function(df, cutoffs) {
   df |>
@@ -350,6 +377,13 @@ careless_results_list <- purrr::pmap(specification_grid, function(sd_within_cuto
   flag_careless(df_indices, cutoffs)
 })
 
+
+saveRDS(careless_results_list, file = here::here("output", "careless_results_list.RDS"))
+```
+
+Reload the dataframe:
+```{r reload-careless}
+careless_results_list <- readRDS(here::here("output", "careless_results_list.RDS"))
 df_careless <- bind_rows(careless_results_list)
 ```
 
@@ -382,6 +416,7 @@ flag_df <- main_df |>
   dplyr::select(external_id, counter, starts_with("flag")) |> 
   rowwise() |> 
   mutate(flag_sum = sum(flag_sd_within, flag_average_response_time, flag_sd_response_time, flag_longstring, flag_mode, na.rm = TRUE)) 
+
 
 
 ```
@@ -480,7 +515,7 @@ integer_plot_pct <- df_indices |>
     limits = c(-.6, 11.1)
   ) +
   theme_bs() +
-  labs(x = "", y = "Percentage", caption = "Removed some small values")
+  labs(x = "", y = "Percentage")
 integer_plot_pct
 ```
 
@@ -533,6 +568,312 @@ ggsave("indices_overview.pdf",
 
 
 # Similarity Indices and Models
+
+We attach the model results to the indices. We classify everyone with an LPA profile 1 or 2, and a mixture IRT class 1 as attentive. 
+```{r attach-model}
+df_indices_models <- lpa_res |> 
+  left_join(irt_res, by = c("external_id", "counter")) |> 
+  left_join(flag_df, by = c("external_id", "counter")) |> 
+    mutate(across(where(is.logical), ~ as.integer(.))) |> 
+    mutate(flag_lpa = ifelse(LPA_profile <= 2, 0, 1),
+           flag_irt = ifelse(mixtureIRT == 1, 0, 1)) |> 
+   select(contains("flag")) |> 
+  # remove multiple hurdle as it is not binary
+  select(!flag_sum) 
+  
+```
+
+
+## Large grid plot with indicators and model results
+
+Create distribution plot for the LPA and mixture IRT: 
+
+```{r model-distributions}
+lpa_prop_df <- lpa_res |> 
+  left_join(irt_res, by = c("external_id", "counter")) |>
+  left_join(flag_df, by = c("external_id", "counter")) |> 
+  mutate(across(where(is.logical), ~ as.integer(.))) |> 
+  count(LPA_profile) |> 
+  mutate(percent = n / sum(n))
+
+# plot LPA results
+lpa_dist_plot <- lpa_prop_df |> 
+  ggplot(aes(x = as.factor(LPA_profile), y = percent, fill = as.factor(LPA_profile))) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  scale_fill_viridis_d() +
+  scale_y_continuous(limits = c(0, .45), expand = c(0, 0), labels = scales::percent_format()) +
+  theme_bs() +
+  labs(x = "Profile Membership", 
+       y = "",
+       title = "Latent Profile")
+
+lpa_dist_plot  
+
+ggsave("lpa_descriptive_plot.pdf", 
+       plot = lpa_dist_plot, 
+       path = here::here("figures"),
+       height = 10, 
+       width = 8)
+```
+
+Plot mixture IRT class membership overall:
+```{r}
+irt_prop_df <- lpa_res |> 
+  left_join(irt_res, by = c("external_id", "counter")) |>
+  left_join(flag_df, by = c("external_id", "counter")) |> 
+  mutate(across(where(is.logical), ~ as.integer(.))) |> 
+  count(mixtureIRT) |> 
+  mutate(percent = n / sum(n)) |> 
+  filter(!is.na(mixtureIRT))
+
+# plot irt results
+irt_dist_plot <- irt_prop_df |>
+  ggplot(aes(
+    x = as.factor(mixtureIRT),
+    y = percent,
+    fill = as.factor(mixtureIRT)
+  )) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  scale_fill_viridis_d() +
+  scale_y_continuous(
+    limits = c(0, 1.05),
+    expand = c(0, 0),
+    labels = scales::percent_format()
+  ) +
+  theme_bs() +
+  labs(x = "Mixture IRT Class", y = "Percentage of Participants")
+
+irt_dist_plot  
+
+ggsave("irt_descriptive_plot.pdf", 
+       plot = irt_dist_plot, 
+       path = here::here("figures"),
+       height = 10, 
+       width = 8)
+```
+
+Plot mixture IRT class membership by calculating how often each individual was classified as being in the inattentive state:
+
+```{r}
+irt_prop_df <- lpa_res |> 
+  left_join(irt_res, by = c("external_id", "counter")) |>
+  left_join(flag_df, by = c("external_id", "counter")) |> 
+  mutate(across(where(is.logical), ~ as.integer(.))) |> 
+  filter(!is.na(mixtureIRT)) |> 
+  group_by(external_id) |> 
+  summarise(n_careless = sum(mixtureIRT == 2, na.rm = TRUE)) |> 
+  ungroup()
+
+# summarize how many participants had X number of careless time points
+irt_summary_df <- irt_prop_df |> 
+  count(n_careless) |> 
+  mutate(percent = n / sum(n))
+
+# plot
+irt_dist_plot_timepoints <- irt_summary_df |> 
+  ggplot(aes(x = n_careless, y = percent)) +
+  geom_bar(stat = "identity", show.legend = FALSE, fill = fill_color) +
+  scale_y_continuous(
+    limits = c(0, .25),
+    expand = c(0, 0),
+    labels = scales::percent_format()
+  ) +
+  scale_x_continuous(
+    breaks = scales::pretty_breaks(),
+    expand = c(0, 0)
+  ) +
+  theme_bs() +
+  labs(
+    x = "Number of Careless Time Points",
+    # y = "Percentage of Participants"
+  )
+
+irt_dist_plot_timepoints
+
+```
+
+Alternatively, we can bin the number of careless time points:
+```{r}
+# bin careless counts
+irt_binned_df <- irt_prop_df |> 
+  mutate(
+    careless_bin = cut(
+      n_careless,
+      breaks = c(-Inf, 0, 5, 10, 20, 50, Inf),
+      labels = c("0", "1–5", "6–10", "11–20", "21–50", "51+"),
+      right = TRUE
+    )
+  )
+
+# summarize number of participants in each bin
+irt_summary_df <- irt_binned_df |> 
+  count(careless_bin) |> 
+  mutate(percent = n / sum(n))
+
+# plot
+irt_dist_plot_binned <- irt_summary_df |> 
+  ggplot(aes(x = careless_bin, y = percent)) +
+  geom_bar(stat = "identity", show.legend = FALSE, fill = fill_color) +
+  scale_y_continuous(
+    limits = c(0, .45),
+    expand = c(0, 0),
+    labels = scales::percent_format()
+  ) +
+  # scale_fill_viridis_d() +
+  theme_bs() +
+  labs(
+    x = "N° of Careless Time Points",
+    y = "",
+    title = "Mixture IRT"
+  )
+  # theme(
+  #   axis.text.x = element_text(size = 15)
+  # )
+
+irt_dist_plot_binned
+```
+
+
+Now combine these plots with all individual indices plots:
+```{r giga-plot}
+# Create individual plots for each index
+df_integer_long <- df_indices |>
+  select(!c(external_id, counter, k_values)) |>
+  select(
+    anto_violations,
+    # syno_violations,
+    longstring_count,
+    mode_count
+  ) |>
+  rename(
+    "Likelihood of antonym violation" = "anto_violations",
+    "Long string count" = "longstring_count",
+    "Items that fall at the mode" = "mode_count"
+  ) |>
+  pivot_longer(cols = everything(), names_to = "index") |>
+  filter(!is.na(value))
+
+# create list of individual bar plots
+integer_plot_list <- df_integer_long |>
+  group_split(index) |>
+  map(~ {
+    index_label <- unique(.x$index)
+
+    p <- ggplot(.x, aes(x = value, y = after_stat(prop))) +
+      geom_bar(fill = fill_color) +
+      scale_y_continuous(expand = c(0, 0), labels = scales::percent_format()) +
+      theme_bs() +
+      labs(x = "", y = "") +
+      ggtitle(index_label)
+
+    # customize x-axis for the antonym violation (binary) plot
+    if (index_label == "Likelihood of antonym violation") {
+      p <- p + scale_x_continuous(
+        breaks = c(0, 1),
+        limits = c(-0.5, 1.5),
+        expand = c(0, 0)
+      )
+    } else {
+      p <- p + scale_x_continuous(
+        breaks = 0:11,
+        limits = c(-0.6, 11.1),
+        expand = c(0, 0)
+      )
+    }
+
+    p
+  })
+
+# create list of individual density plots
+df_cont_long <- df_indices |>
+  select(!c(external_id, counter, k_values)) |>
+  filter(sd_response_time < 10) |>
+  select(
+    assessment_sd,
+    mahalanobis_dist,
+    robustpca_dist,
+    average_response_time,
+    sd_response_time
+  ) |>
+  rename(
+    "Within-assessment response SD" = "assessment_sd",
+    "Mahalanobis dstance" = "mahalanobis_dist",
+    "Robust PCA distance" = "robustpca_dist",
+    "Average time-per-item" = "average_response_time",
+    "SD time-per-item" = "sd_response_time"
+  ) |>
+  pivot_longer(cols = everything(), names_to = "index") |>
+  filter(!is.na(value))
+
+
+cont_plot_list <- df_cont_long |>
+  group_split(index) |>
+  map(~ {
+    ggplot(.x, aes(x = value)) +
+      geom_density(fill = fill_color, color = fill_color, adjust = 1 / 4) +
+      scale_y_continuous(expand = c(0, 0)) +
+      theme_bs() +
+      labs(x = "", y = "") +
+      ggtitle(unique(.x$index))
+  })
+
+# combine into grid
+plot_grid_list <- c(integer_plot_list, cont_plot_list, list(lpa_dist_plot, irt_dist_plot_binned))
+
+combined_plot_all <- cowplot::plot_grid(
+  plotlist = plot_grid_list,
+  ncol = 2,  
+  align = "hv"
+)
+
+ggsave("indices_models_overview.pdf", 
+       plot = combined_plot_all, 
+       path = here::here("figures"),
+       height = 16, 
+       width = 11)
+```
+
+
+
+
+
+
+## Jaccard Similarity of Indices and Model Results
+
+We can visualize the classification of careless responding based on indices and and model results with a Jaccard similarity heatmap. 
+
+```{r jaccard-similarity}
+jaccard_matrix <- vegan::vegdist(t(df_indices_models), na.rm = TRUE, method = "jaccard", binary = TRUE)
+jaccard_matrix <- as.matrix(jaccard_matrix)
+
+# convert dissimilarity to similarity
+jaccard_sim_matrix <- 1-jaccard_matrix
+
+# self-similarity
+diag(jaccard_sim_matrix) <- 1
+
+jaccard_sim_matrix |> 
+  as.data.frame() |> 
+  rownames_to_column(var = "Var1") |> 
+  pivot_longer(-Var1, names_to = "Var2", values_to = "Similarity") |> 
+  ggplot(aes(x = Var1, y = Var2, fill = Similarity)) +
+  geom_tile(color = "white") + 
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                       midpoint = 0.5, limit = c(0,1), space = "Lab",
+                       name="Jaccard\nSimilarity") +
+  theme_bs() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1), 
+        axis.title.x = element_blank(), 
+        axis.title.y = element_blank(), 
+        panel.grid.major = element_blank(), 
+        panel.border = element_blank(),
+        legend.justification = c(1, 0),
+        legend.position = c(0.6, 0.7), 
+        legend.direction = "horizontal") +
+  coord_fixed() + 
+  geom_text(aes(label = round(Similarity, 2)), color = "black", size = 3)
+
+```
 
 
 
