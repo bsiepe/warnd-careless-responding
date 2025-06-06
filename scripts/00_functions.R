@@ -472,5 +472,109 @@ theme_bs <- function(){
     )
 }
 
+### For the multiverse
+plot_correlation <- function(mv_res) {
+  mv_res |> 
+    dplyr::arrange(correlation) |> 
+    dplyr::mutate(iteration = dplyr::row_number()) |>
+    ggplot(aes(x = iteration, y = correlation)) + 
+    geom_point(size = 0.8) +
+    theme_bs() +
+    labs(x = "", y = "Correlation")
+}
 
+plot_similarity <- function(mv_res, model) {
+  if(model == "lpa"){
+    mv_res |> 
+      dplyr::select(jaccard_similarity_lpa) |> 
+      dplyr::arrange(jaccard_similarity_lpa) |> 
+      dplyr::mutate(iteration = dplyr::row_number()) |>
+      ggplot(aes(x = iteration, y = jaccard_similarity_lpa)) + 
+      geom_point(size = 0.8) +
+      theme_bs() +
+      labs(x = "", y = "Similarity")
+  } else if(model == "irt"){
+    mv_res |> 
+      dplyr::select(jaccard_similarity_irt) |> 
+      dplyr::arrange(jaccard_similarity_irt) |> 
+      dplyr::mutate(iteration = dplyr::row_number()) |>
+      ggplot(aes(x = iteration, y = jaccard_similarity_irt)) + 
+      geom_point(size = 0.8) +
+      theme_bs() +
+      labs(x = "", y = "Similarity")
+  }
+
+}
+
+plot_specification <- function(mv_res, type = "cor", model = NULL) {
+  if(type == "cor"){
+    outcome <- "correlation"
+  } else if (type == "similarity"){
+    if(model == "lpa"){
+      outcome <- "jaccard_similarity_lpa"
+    } else if(model == "irt"){
+      outcome <- "jaccard_similarity_irt"
+    }
+  }
+  
+  
+  mv_res |> 
+    dplyr::arrange(outcome) |> 
+    dplyr::mutate(iteration = dplyr::row_number()) |>
+    dplyr::mutate(
+      sd_within_level = case_when(
+        sd_within_cutoff == 0.75 ~ "low",
+        sd_within_cutoff == 1 ~ "medium", 
+        sd_within_cutoff == 1.25 ~ "high"
+      ),
+      avg_rt_level = case_when(
+        average_response_time_cutoff == 1 ~ "low",
+        average_response_time_cutoff == 1.5 ~ "medium",
+        average_response_time_cutoff == 2 ~ "high"
+      ),
+      sd_rt_level = case_when(
+        sd_response_time_cutoff == 0.4 ~ "low",
+        sd_response_time_cutoff == 0.6 ~ "medium",
+        sd_response_time_cutoff == 1 ~ "high"
+      ),
+      longstring_level = case_when(
+        longstring_cutoff == 6 ~ "low",
+        longstring_cutoff == 7 ~ "medium",
+        longstring_cutoff == 8 ~ "high"
+      ),
+      mode_level = case_when(
+        mode_cutoff == 5 ~ "low",
+        mode_cutoff == 6 ~ "high"
+      )
+    ) |>
+    tidyr::pivot_longer(cols = c(sd_within_level, avg_rt_level, sd_rt_level, 
+                                 longstring_level, mode_level),
+                        values_to = "value", names_to = "specification") |>
+    dplyr::mutate(specification = dplyr::case_match(specification,
+                                                    "sd_within_level" ~ "SD Within",
+                                                    "avg_rt_level" ~ "Avg RT",
+                                                    "sd_rt_level" ~ "SD RT", 
+                                                    "longstring_level" ~ "Longstring",
+                                                    "mode_level" ~ "Mode")) |> 
+    dplyr::mutate(specification = as.factor(specification)) |> 
+    dplyr::mutate(value = forcats::fct_relevel(value, "low", "medium", "high")) |> 
+    ggplot(aes(x = iteration, y = 1, color = value)) + 
+    geom_point(shape = 124, size = 15) +
+    scale_y_continuous(limits = c(0.99, 1.01), expand = c(0,0)) +
+    theme_bs() +
+    scale_color_manual(values = c("low" = "#2166AC", "medium" = "lightblue", "high" = "#B2182B")) +
+    facet_wrap(specification~., ncol = 1, strip.position = "left") +
+    labs(y = "", x = "Iteration", color = "Cutoff Level") +
+    theme(axis.ticks.y = element_blank(),
+          axis.text.y = element_blank(),
+          panel.grid.major.y = element_blank(),
+          panel.grid.minor.y = element_blank(),
+          panel.spacing.y = unit(0, "lines"),
+          axis.line = element_blank(),
+          legend.text = element_text(size = rel(1.3)),
+          legend.title = element_text(size = rel(1.3)),
+          strip.text = element_text(size = rel(1.4)),
+          axis.text.x = element_text(size = rel(1.2)),
+          axis.title.x = element_text(size = rel(1.3)))
+}
 
