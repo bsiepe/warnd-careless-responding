@@ -585,7 +585,8 @@ compute_similarities <- function(flag_list, lpa_res, irt_res) {
      # convert to binary 
      mutate(flag_lpa = ifelse(LPA_profile <= 2, 0, 1),
             flag_irt = ifelse(mixtureIRT == 1, 0, 1),
-            flag_sum = ifelse(flag_sum == 0, 0, 1)) |> 
+            flag_sum1 = ifelse(flag_sum == 0, 0, 1),
+            flag_sum2 = ifelse(flag_sum <2, 0, 1)) |> 
      select(contains("flag"))
    
    # computing jaccard similarity
@@ -597,11 +598,14 @@ compute_similarities <- function(flag_list, lpa_res, irt_res) {
    diag(jaccard_sim_matrix) <- 1
    
    list(
-     n_careless_sum = sum(flag_df$flag_sum != 0, na.rm = TRUE),
+     n_careless_sum1 = sum(df_indices_models$flag_sum1 != 0, na.rm = TRUE),
+     n_careless_sum2 = sum(df_indices_models$flag_sum2 != 0, na.rm = TRUE),
      n_careless_lpa = sum(df_indices_models$flag_lpa, na.rm = TRUE),
      n_careless_irt = sum(df_indices_models$flag_irt, na.rm = TRUE),
-     jaccard_similarity_lpa = jaccard_sim_matrix[["flag_sum", "flag_lpa"]],
-     jaccard_similarity_irt = jaccard_sim_matrix[["flag_sum", "flag_irt"]]
+     jaccard_similarity1_lpa = jaccard_sim_matrix[["flag_sum1", "flag_lpa"]],
+     jaccard_similarity1_irt = jaccard_sim_matrix[["flag_sum1", "flag_irt"]],
+     jaccard_similarity2_lpa = jaccard_sim_matrix[["flag_sum2", "flag_lpa"]],
+     jaccard_similarity2_irt = jaccard_sim_matrix[["flag_sum2", "flag_irt"]]    
    )
  })
 }
@@ -616,53 +620,37 @@ df_jaccard_spec <- cbind(df_jaccard, specification_grid)
 ```
 
 
-Visualize the with two specification curves in one: 
+Visualize the results for both models and the single and double hurdle approach: 
 ```{r}
-# Combine plots
-lpa_similarity_plot <- plot_similarity(df_jaccard_spec, "lpa")
-irt_similarity_plot <- plot_similarity(df_jaccard_spec, "irt")
-specification_plot_lpa_sim <- plot_specification(df_jaccard_spec, 
-                                                 type = "similarity",
-                                                 model = "lpa")
-specification_plot_irt_sim <- plot_specification(df_jaccard_spec, 
-                                                 type = "similarity",
-                                                 model = "irt")
+hurdles <- c("single", "double")
+models <- c("lpa", "irt")
+type <- "similarity"
 
-mv_plot_lpa_sim <- plot_grid(
-  lpa_similarity_plot,
-  specification_plot_lpa_sim,
-  ncol = 1,
-  rel_heights = c(1, 1, 2),
-  align = "h",
-  axis = "b"
-)
-
-ggsave(
-  "mv_plot_similarity_lpa.pdf",
-  mv_plot_lpa_sim,
-  device = "pdf",
-  path = here::here("figures"),
-  height = 8,
-  width = 10
-)
-
-mv_plot_irt_sim <- plot_grid(
-  irt_similarity_plot,
-  specification_plot_irt_sim,
-  ncol = 1,
-  rel_heights = c(1, 1, 2),
-  align = "h",
-  axis = "b"
-)
-
-ggsave(
-  "mv_plot_similarity_irt.pdf",
-  mv_plot_irt_sim,
-  device = "pdf",
-  path = here::here("figures"),
-  height = 8,
-  width = 10
-)
+# plots for similarities
+for(model in models) {
+  for(hurdle in hurdles) {
+    sim_plot <- plot_similarity(df_jaccard_spec, model, hurdle = hurdle)
+    spec_plot <- plot_specification(df_jaccard_spec, type = "similarity", model = model, hurdle = hurdle)
+    
+    mv_plot <- plot_grid(
+      sim_plot,
+      spec_plot,
+      ncol = 1,
+      rel_heights = c(1, 2),
+      align = "h",
+      axis = "b"
+    )
+    
+    ggsave(
+      paste0("mv_plot_similarity_", model, "_", hurdle, ".pdf"),
+      mv_plot,
+      device = "pdf",
+      path = here::here("figures"),
+      height = 8,
+      width = 10
+    )
+  }
+}
 ```
 
 

@@ -483,27 +483,28 @@ plot_correlation <- function(mv_res) {
     labs(x = "", y = "Correlation")
 }
 
-plot_similarity <- function(mv_res, model) {
+plot_similarity <- function(mv_res, model, hurdle = "single") {
   if(model == "lpa"){
-    mv_res |> 
-      dplyr::select(jaccard_similarity_lpa) |> 
-      dplyr::arrange(jaccard_similarity_lpa) |> 
-      dplyr::mutate(iteration = dplyr::row_number()) |>
-      ggplot(aes(x = iteration, y = jaccard_similarity_lpa)) + 
-      geom_point(size = 0.8) +
-      theme_bs() +
-      labs(x = "", y = "Similarity")
+    if(hurdle == "single"){
+      outcome <- "jaccard_similarity1_lpa"
+    } else if(hurdle == "double"){
+      outcome <- "jaccard_similarity2_lpa"
+    }
   } else if(model == "irt"){
-    mv_res |> 
-      dplyr::select(jaccard_similarity_irt) |> 
-      dplyr::arrange(jaccard_similarity_irt) |> 
-      dplyr::mutate(iteration = dplyr::row_number()) |>
-      ggplot(aes(x = iteration, y = jaccard_similarity_irt)) + 
-      geom_point(size = 0.8) +
-      theme_bs() +
-      labs(x = "", y = "Similarity")
+    if(hurdle == "single"){
+      outcome <- "jaccard_similarity1_irt"
+    } else if(hurdle == "double"){
+      outcome <- "jaccard_similarity2_irt"
+    }
   }
-
+  
+  mv_res |> 
+    dplyr::arrange(!!sym(outcome)) |> 
+    dplyr::mutate(iteration = dplyr::row_number()) |>
+    ggplot(aes(x = iteration, y = !!sym(outcome))) + 
+    geom_point(size = 0.8) +
+    theme_bs() +
+    labs(x = "", y = "Similarity")
 }
 
 plot_specification <- function(mv_res, 
@@ -518,9 +519,18 @@ plot_specification <- function(mv_res,
     }
   } else if (type == "similarity"){
     if(model == "lpa"){
-      outcome <- "jaccard_similarity_lpa"
+      if(hurdle == "single"){
+        outcome <- "jaccard_similarity1_lpa"
+      } else if (hurdle == "double"){
+        outcome <- "jaccard_similarity2_lpa"
+      }
+      
     } else if(model == "irt"){
-      outcome <- "jaccard_similarity_irt"
+      if(hurdle == "single"){
+        outcome <- "jaccard_similarity1_irt"
+      } else if (hurdle == "double"){
+        outcome <- "jaccard_similarity2_irt"
+      }
     }
   }
   
