@@ -506,9 +506,16 @@ plot_similarity <- function(mv_res, model) {
 
 }
 
-plot_specification <- function(mv_res, type = "cor", model = NULL) {
+plot_specification <- function(mv_res, 
+                               type = "cor",
+                               hurdle = "single",
+                               model = NULL) {
   if(type == "cor"){
-    outcome <- "correlation"
+    if(hurdle == "single"){
+      outcome <- "correlation_1plus"
+    } else if (hurdle == "double"){
+      outcome <- "correlation_2plus"
+    }
   } else if (type == "similarity"){
     if(model == "lpa"){
       outcome <- "jaccard_similarity_lpa"
@@ -519,7 +526,7 @@ plot_specification <- function(mv_res, type = "cor", model = NULL) {
   
   
   mv_res |> 
-    dplyr::arrange(outcome) |> 
+    dplyr::arrange(!!sym(outcome)) |> 
     dplyr::mutate(iteration = dplyr::row_number()) |>
     dplyr::mutate(
       sd_within_level = case_when(
@@ -547,6 +554,8 @@ plot_specification <- function(mv_res, type = "cor", model = NULL) {
         mode_cutoff == 6 ~ "high"
       )
     ) |>
+    # remove non-varying column
+    dplyr::select(!anto_cutoff) |> 
     tidyr::pivot_longer(cols = c(sd_within_level, avg_rt_level, sd_rt_level, 
                                  longstring_level, mode_level),
                         values_to = "value", names_to = "specification") |>

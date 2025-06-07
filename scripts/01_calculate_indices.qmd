@@ -323,13 +323,16 @@ average_response_time_cutoff <- c(1, 1.5, 2)
 sd_response_time_cutoff <- c(0.4, 0.6, 1)
 longstring_cutoff <- c(6, 7, 8)
 mode_cutoff <- c(5, 6)
+anto_cutoff <- c(0)
+
 
 specification_grid <- expand.grid(
   sd_within_cutoff, 
   average_response_time_cutoff, 
   sd_response_time_cutoff,
   longstring_cutoff,
-  mode_cutoff
+  mode_cutoff,
+  anto_cutoff
 )
 
 colnames(specification_grid) <- 
@@ -338,7 +341,8 @@ colnames(specification_grid) <-
   "average_response_time_cutoff", 
   "sd_response_time_cutoff", 
   "longstring_cutoff", 
-  "mode_cutoff"
+  "mode_cutoff",
+  "anto_cutoff"
 )
 
 
@@ -356,23 +360,26 @@ flag_careless <- function(df, cutoffs) {
       flag_average_response_time = average_response_time < cutoffs$average_response_time_cutoff,
       flag_sd_response_time = sd_response_time < cutoffs$sd_response_time_cutoff,
       flag_longstring = longstring_count > cutoffs$longstring_cutoff,
-      flag_mode = mode_count > cutoffs$mode_cutoff
+      flag_mode = mode_count > cutoffs$mode_cutoff,
+      flag_anto = anto_violations > cutoffs$anto_cutoff
     ) |>
     mutate(spec_id = paste0("spec_", "sd_", cutoffs$sd_within_cutoff, "_",
                                     "avg_rt_",  cutoffs$average_response_time_cutoff, "_",
                                     "sd_rt_",  cutoffs$sd_response_time_cutoff, "_",
                                     "long_",  cutoffs$longstring_cutoff, "_",
-                                    "mode_",  cutoffs$mode_cutoff))
+                                    "mode_",  cutoffs$mode_cutoff, "_",
+                                    "anto_", cutoffs$anto_cutoff))
 }
 
 careless_results_list <- purrr::pmap(specification_grid, function(sd_within_cutoff, average_response_time_cutoff,
-                                                  sd_response_time_cutoff, longstring_cutoff, mode_cutoff) {
+                                                  sd_response_time_cutoff, longstring_cutoff, mode_cutoff, anto_cutoff) {
   cutoffs <- list(
     sd_within_cutoff = sd_within_cutoff,
     average_response_time_cutoff = average_response_time_cutoff,
     sd_response_time_cutoff = sd_response_time_cutoff,
     longstring_cutoff = longstring_cutoff,
-    mode_cutoff = mode_cutoff
+    mode_cutoff = mode_cutoff,
+    anto_cutoff = anto_cutoff
   )
   flag_careless(df_indices, cutoffs)
 })
@@ -415,7 +422,7 @@ main_df <- careless_results_list[[main_id]]
 flag_df <- main_df |> 
   dplyr::select(external_id, counter, starts_with("flag")) |> 
   rowwise() |> 
-  mutate(flag_sum = sum(flag_sd_within, flag_average_response_time, flag_sd_response_time, flag_longstring, flag_mode, na.rm = TRUE)) 
+  mutate(flag_sum = sum(flag_sd_within, flag_average_response_time, flag_sd_response_time, flag_longstring, flag_mode, flag_anto, na.rm = TRUE)) 
 
 
 
@@ -443,7 +450,7 @@ rm(careless_results_list)
 flag_list <- lapply(careless_list, function(x){
     x |> 
     rowwise() |> 
-    dplyr::mutate(flag_sum = sum(flag_sd_within, flag_average_response_time, flag_sd_response_time, flag_longstring, flag_mode, na.rm = TRUE)) |> 
+    dplyr::mutate(flag_sum = sum(flag_sd_within, flag_average_response_time, flag_sd_response_time, flag_longstring, flag_mode, flag_anto, na.rm = TRUE)) |> 
     dplyr::select(external_id, counter, flag_sum)
 })
 
@@ -470,16 +477,25 @@ compute_correlations <- function(flag_list, data) {
  imap(flag_list, function(flag_df, i) {
    cat("Processing iteration", i, "of", length(flag_list), "\n")
    
-   excluded_ids <- flag_df |> 
-     filter(flag_sum != 0) |> 
+   excluded_ids_1plus <- flag_df |> 
+     filter(flag_sum >= 1) |> 
      select(external_id, counter)
    
-   excluded_data <- data |> 
-     inner_join(excluded_ids, by = c("external_id", "counter"))
+   excluded_ids_2plus <- flag_df |> 
+     filter(flag_sum >= 2) |> 
+     select(external_id, counter)
+   
+   excluded_data_1plus <- data |> 
+     inner_join(excluded_ids_1plus, by = c("external_id", "counter"))
+   
+   excluded_data_2plus <- data |> 
+     inner_join(excluded_ids_2plus, by = c("external_id", "counter"))
    
    list(
-     correlation = cor(excluded_data$nervous_d, excluded_data$overwhelm_d, use = "pairwise.complete.obs"),
-     n_excluded = nrow(excluded_data)
+     correlation_1plus = cor(excluded_data_1plus$nervous_d, excluded_data_1plus$overwhelm_d, use = "pairwise.complete.obs"),
+     n_excluded_1plus = nrow(excluded_data_1plus),
+     correlation_2plus = cor(excluded_data_2plus$nervous_d, excluded_data_2plus$overwhelm_d, use = "pairwise.complete.obs"),
+     n_excluded_2plus = nrow(excluded_data_2plus)
    )
  })
 }
@@ -497,20 +513,57 @@ saveRDS(df_cors_spec, here::here("output", "df_cors.RDS"))
 
 
 
-Here is a visual summary of the results across different specifications in the form of a specification curve:
+Here is a visual summary of the results across different specifications in the form of a specification curve, first for the single-hurdle approach:
 
 ```{r}
 df_cors_spec <- readRDS(here::here("output", "df_cors.RDS"))
 # Combine plots
-correlation_plot <- plot_correlation(df_cors_spec)
-specification_plot <- plot_specification(df_cors_spec)
+correlation_plot_single <- df_cors_spec |> 
+    dplyr::arrange(correlation_1plus) |> 
+    dplyr::mutate(iteration = dplyr::row_number()) |>
+    ggplot(aes(x = iteration, y = correlation_1plus)) + 
+    geom_point(size = 0.8) +
+    theme_bs() +
+    labs(x = "", y = "Correlation", subtitle = "Single-Hurdle Approach")
+specification_plot <- plot_specification(df_cors_spec,
+                                         type = "cor",
+                                         hurdle = "single")
 
-mv_plot_cors <- plot_grid(correlation_plot, specification_plot, 
+mv_plot_cors_single <- plot_grid(correlation_plot_single, specification_plot, 
           ncol = 1, rel_heights = c(1, 2), axis = "b",
           align = "h")
 
-ggsave("mv_plot_cors.pdf", mv_plot_cors, device = "pdf", path = here::here("figures"),
-       height = 8, width = 10)
+ggsave("mv_plot_cors_single.pdf", mv_plot_cors_single, device = "pdf", path = here::here("figures"),
+       height = 9, width = 10)
+```
+
+Then for the multiple hurdle approach with two "hurdles":
+
+```{r}
+# Combine plots
+correlation_plot_double <- df_cors_spec |> 
+    dplyr::arrange(correlation_2plus) |> 
+    dplyr::mutate(iteration = dplyr::row_number()) |>
+    ggplot(aes(x = iteration, y = correlation_2plus)) + 
+    geom_point(size = 0.8) +
+    theme_bs() +
+    labs(x = "", y = "Correlation", subtitle = "Duoble-Hurdle Approach")
+specification_plot <- plot_specification(df_cors_spec,
+                                         type = "cor",
+                                         hurdle = "double")
+
+mv_plot_cors_double <- plot_grid(
+  correlation_plot_double,
+  specification_plot,
+  ncol = 1,
+  rel_heights = c(1, 2),
+  axis = "b",
+  align = "h"
+)
+
+ggsave("mv_plot_cors_double.pdf", mv_plot_cors_double, device = "pdf", path = here::here("figures"),
+       height = 9, width = 10)
+
 ```
 
 
