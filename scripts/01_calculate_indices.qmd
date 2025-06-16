@@ -33,11 +33,6 @@ params:
 In this file, we will compute all indices of careless responding. We aim for the following structure: 
 `external_id`, `counter`, `index`. There should be no implicit missingness. 
 
-TODOS:
-
-    - We should maybe return 0 for the within-assessment-SD instead of NA when there is no variability at all. 
-
-
 
 We first load all relevant packages: 
 ```{r packages}
@@ -397,20 +392,21 @@ df_careless <- bind_rows(careless_results_list)
 
 We can then apply different combination rules for multiple indices. For the manuscript, we focus on our "main" specification, which is:
 
-    - Within-assessment variability: 1.0
+    - Within-assessment variability: 0.75
     - Longstring: 7/9
     - Mode: 5/9
-    - Average response time: 1.5s
-    - SD response time: 0.6s
+    - Average response time: 1s
+    - SD response time: 0.4s
     
 ```{r multiple-hurdles}
+#| eval: !expr params$rerun
 # select df of main specification
 main_id <- specification_grid |>
   mutate(id = row_number()) |> 
   filter(
-    sd_within_cutoff == 1.0 &
-      average_response_time_cutoff == 1.5 &
-      sd_response_time_cutoff == 0.6 &
+    sd_within_cutoff == 0.75 &
+      average_response_time_cutoff == 1 &
+      sd_response_time_cutoff == 0.4 &
       longstring_cutoff == 7 & mode_cutoff == 5
   ) |> 
     pull(id)
@@ -425,8 +421,9 @@ flag_df <- main_df |>
   mutate(flag_sum = sum(flag_sd_within, flag_average_response_time, flag_sd_response_time, flag_longstring, flag_mode, flag_anto, na.rm = TRUE)) 
 
 
-
+saveRDS(flag_df, file = here::here("output", "flag_df.RDS"))
 ```
+
 
 
 ## Checking impact of excluding careless responses
@@ -583,7 +580,7 @@ compute_similarities <- function(flag_list, lpa_res, irt_res) {
      left_join(flag_df, by = c("external_id", "counter")) |> 
      mutate(across(where(is.logical), ~ as.integer(.))) |> 
      # convert to binary 
-     mutate(flag_lpa = ifelse(LPA_profile <= 2, 0, 1),
+     mutate(flag_lpa = ifelse(LPA_profile != 2, 1, 0),
             flag_irt = ifelse(mixtureIRT == 1, 0, 1),
             flag_sum1 = ifelse(flag_sum == 0, 0, 1),
             flag_sum2 = ifelse(flag_sum <2, 0, 1)) |> 
@@ -617,11 +614,14 @@ names(jaccard_results) <- names(flag_list)
 df_jaccard <- bind_rows(jaccard_results)
 df_jaccard_spec <- cbind(df_jaccard, specification_grid)
 
+
+saveRDS(df_jaccard_spec, file = here::here("output", "df_jaccard_spec.RDS"))
 ```
 
 
 Visualize the results for both models and the single and double hurdle approach: 
 ```{r}
+df_jaccard_spec <- readRDS(here::here("output", "df_jaccard_spec.RDS"))
 hurdles <- c("single", "double")
 models <- c("lpa", "irt")
 type <- "similarity"
@@ -646,7 +646,7 @@ for(model in models) {
       mv_plot,
       device = "pdf",
       path = here::here("figures"),
-      height = 8,
+      height = 10,
       width = 10
     )
   }
@@ -655,13 +655,12 @@ for(model in models) {
 
 
 
-
 # Descriptives & Visualizations
 
 ## Summary statistics
 
 
-Numbers in parentheses represent first and third quartile. 
+Numbers in parentheses represent first and third quartiles. 
 ```{r}
 df_indices |>   
   mutate(k_values = as.factor(k_values), 
@@ -674,6 +673,40 @@ df_indices |>
 ```
 
 
+## Main cutoffs
+
+Above, we defined the main default cutoffs that we use for the paper. We now check how many responses are marked as careless for each of the indices (in percent of all responses):
+```{r}
+flag_df <- readRDS(here::here("output", "flag_df.RDS"))
+
+total_obs <- nrow(flag_df)
+non_missing_obs <- flag_df |> 
+  filter(!is.na(flag_sd_within)) |> 
+  nrow()
+
+flag_df |> 
+  ungroup() |> 
+  select(!c(external_id, counter, flag_sum)) |> 
+  summarize(across(everything(), 
+                   ~sum(., na.rm = TRUE))) |> 
+  mutate(across(everything(), 
+                ~ round(./ non_missing_obs * 100, 2))) |> 
+  knitr::kable()
+
+```
+
+What happens when using the multiple-hurdle approach with these indices? We again check how many responses are marked as careless for each of the approaches (in percent of all responses)
+```{r}
+df_jaccard_spec |> 
+    filter(
+    sd_within_cutoff == 0.75 &
+      average_response_time_cutoff == 1 &
+      sd_response_time_cutoff == 0.4 &
+      longstring_cutoff == 7 & mode_cutoff == 5
+  ) |> 
+  mutate(across(contains("n_"),
+                ~ round(./ non_missing_obs * 100, 2)))
+```
 
 
 
