@@ -84,36 +84,9 @@ rt_ema_items <- paste0("rt_", ema_items)
 
 For later visualizations, we also load the results of different model-based approaches: 
 ```{r load-models}
-lpa_res <- readRDS(here::here("output", "data_profiles.RDS"))
+lpa_res <- readRDS(here::here("output", "data_profiles_corrected.RDS"))
 irt_res <- readRDS(here::here("output", "data_mixtureIRT.RDS"))
 ```
-
-
-# Data Preparation
-
-We first subset the data for testing the functions on a smaller dataframe of 30 individuals:
-
-```{r subset-data, eval = FALSE}
-#| eval: !expr params$rerun
-# select 30 individuals at random
-ids_to_subset <- data |> 
-  distinct(external_id) |> 
-  slice_sample(n = 30) |> 
-  pull(external_id)
-
-
-subset_data <- data |> 
-  filter(external_id %in% ids_to_subset)
-
-saveRDS(subset_data, file = here::here("data", "indices_experiment_data.RDS"))
-
-```
-
-```{r, include = FALSE}
-subset_data <- readRDS(here::here("data", "indices_experiment_data.RDS"))
-```
-
-
 
 # Analysis
 
@@ -136,15 +109,6 @@ index_functions <- list(
     func = calc_indicator_rob_PCA_orthogonal_distance,
     args = list(items = ema_items)
   ),
-  # leave out synonym for now
-  # psychometric_syntonym = list(
-  #   func = calc_psychometric_synonym_violations,
-  #   args = list(
-  #     items = ema_items,
-  #     cor_threshold = 0.45,
-  #     synonym_difference_threshold = 5
-  #   )
-  # ),
   psychometric_antonym = list(
     func = calc_psychometric_antonym_violations,
     args = list(
@@ -181,40 +145,6 @@ index_functions <- list(
 
 
 ```
-
-
-Calculate them all on the subset:
-
-```{r calc-indices, message=FALSE}
-#| eval: !expr params$rerun
-# calculate all indices
-indices <- index_functions |>
-  purrr::map(
-    .f = function(x) {
-      do.call(x$func, c(list(data = subset_data), x$args))
-    }
-  )
-
-# combine indices
-df_indices <- indices |>
-  purrr::reduce(
-    .f = function(x, y) {
-      x |>
-        left_join(y, by = c("external_id", "counter"))
-    }
-  ) |> 
-  dplyr::mutate(mode_count = if_else(is.nan(mode_count), NA, mode_count)) |> 
-  dplyr::rename(k_values = kValues)
-```
-
-For now, we also convert longstring and mode proportions to absolute numbers:
-```{r}
-#| eval: !expr params$rerun
-df_indices <- df_indices |> 
-  mutate(longstring_count = as.integer(longstring_count * length(ema_items)),
-         mode_count = as.integer(mode_count * length(ema_items)))
-```
-
 
 
 ## Full Analysis Individual Indices
@@ -298,6 +228,7 @@ saveRDS(df_indices, file = here::here("output", "df_indices.RDS"))
 
 Read back in: 
 ```{r}
+#| label: load-indices
 df_indices <- readRDS(file = here::here("output", "df_indices.RDS"))
 ```
 
@@ -312,7 +243,8 @@ Here, we investigate different settings to detect careless responding. These con
 
 We define a grid of different cutoffs and settings. 
 
-```{r specifications}
+```{r}
+#| label: specifications
 sd_within_cutoff <- c(0.75, 1, 1.25)
 average_response_time_cutoff <- c(1, 1.5, 2)
 sd_response_time_cutoff <- c(0.4, 0.6, 1)
@@ -345,7 +277,8 @@ colnames(specification_grid) <-
 ```
 
 We then compute the multiverse by flagging each index at each observation as being indicative of careless responding or not:
-```{r flag-careless}
+```{r}
+#| label: flag-careless
 #| eval: !expr params$rerun
 # flagging response as careless
 flag_careless <- function(df, cutoffs) {
@@ -392,11 +325,11 @@ df_careless <- bind_rows(careless_results_list)
 
 We can then apply different combination rules for multiple indices. For the manuscript, we focus on our "main" specification, which is:
 
-    - Within-assessment variability: 0.75
+    - Within-assessment variability: 1.25
     - Longstring: 7/9
     - Mode: 5/9
-    - Average response time: 1s
-    - SD response time: 0.4s
+    - Average response time: 2s
+    - SD response time: 1s
     
 ```{r multiple-hurdles}
 #| eval: !expr params$rerun
@@ -404,9 +337,9 @@ We can then apply different combination rules for multiple indices. For the manu
 main_id <- specification_grid |>
   mutate(id = row_number()) |> 
   filter(
-    sd_within_cutoff == 0.75 &
-      average_response_time_cutoff == 1 &
-      sd_response_time_cutoff == 0.4 &
+    sd_within_cutoff == 1.25 &
+      average_response_time_cutoff == 2 &
+      sd_response_time_cutoff == 1 &
       longstring_cutoff == 7 & mode_cutoff == 5
   ) |> 
     pull(id)
@@ -658,8 +591,6 @@ for(model in models) {
 # Descriptives & Visualizations
 
 ## Summary statistics
-
-
 Numbers in parentheses represent first and third quartiles. 
 ```{r}
 df_indices |>   
@@ -695,18 +626,45 @@ flag_df |>
 
 ```
 
-What happens when using the multiple-hurdle approach with these indices? We again check how many responses are marked as careless for each of the approaches (in percent of all responses)
+
+
+What happens when using the multiple-hurdle approach with these indices? We again check how many responses are marked as careless for each of the approaches (in percent of all responses). 
 ```{r}
 df_jaccard_spec |> 
     filter(
-    sd_within_cutoff == 0.75 &
-      average_response_time_cutoff == 1 &
-      sd_response_time_cutoff == 0.4 &
+    sd_within_cutoff == 1.25 &
+      average_response_time_cutoff == 2 &
+      sd_response_time_cutoff == 1 &
       longstring_cutoff == 7 & mode_cutoff == 5
   ) |> 
   mutate(across(contains("n_"),
-                ~ round(./ non_missing_obs * 100, 2)))
+                ~ round(./ non_missing_obs * 100, 2))) |> 
+  rename(
+    "Prop. Careless Single Hurdle" = n_careless_sum1, 
+    "Prop. Careless Double Hurdle" = n_careless_sum2
+  ) |> 
+  knitr::kable()
 ```
+
+How would these change if we slightly changed one cutoff, e.g., the SD response time cutoff to 0.6?
+
+```{r}
+df_jaccard_spec |> 
+    filter(
+    sd_within_cutoff == 1.25 &
+      average_response_time_cutoff == 2 &
+      sd_response_time_cutoff == 1 &
+      longstring_cutoff == 7 & mode_cutoff == 6
+  ) |> 
+  mutate(across(contains("n_"),
+                ~ round(./ non_missing_obs * 100, 2))) |> 
+  rename(
+    "Prop. Careless Single Hurdle" = n_careless_sum1, 
+    "Prop. Careless Double Hurdle" = n_careless_sum2
+  ) |> 
+  knitr::kable()
+```
+
 
 
 
@@ -813,7 +771,7 @@ cont_plot <- df_indices |>
                # use finer bandwidth
                adjust = 1 / 4) +
   ggh4x::facet_wrap2(. ~ index, scales = "free") +
-  scale_y_continuous(expand = c(0, 0)) +
+  scale_y_continuous(expand = c(0, 0), labels = scales::label_percent()) +
   theme_bs() +
   labs(x = "", y = "")
 
@@ -836,16 +794,22 @@ ggsave("indices_overview.pdf",
 # Similarity Indices and Models
 
 We attach the model results to the indices. We classify everyone with an LPA profile 1 or 2, and a mixture IRT class 1 as attentive. 
-```{r attach-model}
+```{r}
+#| label: attach-model
 df_indices_models <- lpa_res |> 
   left_join(irt_res, by = c("external_id", "counter")) |> 
   left_join(flag_df, by = c("external_id", "counter")) |> 
     mutate(across(where(is.logical), ~ as.integer(.))) |> 
-    mutate(flag_lpa = ifelse(LPA_profile <= 2, 0, 1),
+    mutate(flag_lpa = ifelse(LPA_profile != 2, 1, 0),
            flag_irt = ifelse(mixtureIRT == 1, 0, 1)) |> 
    select(contains("flag")) |> 
-  # remove multiple hurdle as it is not binary
-  select(!flag_sum) 
+  # recode to obtain single hurdle and multiple hurdle approach
+  mutate(
+    single_hurdle = if_else(flag_sum == 0, 0, 1),
+    double_hurdle = if_else(flag_sum < 2, 0, 1)
+  ) |> 
+  # then remove raw sum
+  select(!flag_sum)
   
 ```
 
@@ -854,7 +818,8 @@ df_indices_models <- lpa_res |>
 
 Create distribution plot for the LPA and mixture IRT: 
 
-```{r model-distributions}
+```{r}
+#| label: model-distributions
 lpa_prop_df <- lpa_res |> 
   left_join(irt_res, by = c("external_id", "counter")) |>
   left_join(flag_df, by = c("external_id", "counter")) |> 
@@ -1109,7 +1074,12 @@ ggsave("indices_models_overview.pdf",
 We can visualize the classification of careless responding based on indices and and model results with a Jaccard similarity heatmap. 
 
 ```{r jaccard-similarity}
-jaccard_matrix <- vegan::vegdist(t(df_indices_models), na.rm = TRUE, method = "jaccard", binary = TRUE)
+jaccard_matrix <- vegan::vegdist(
+  t(df_indices_models),
+  na.rm = TRUE,
+  method = "jaccard",
+  binary = TRUE
+)
 jaccard_matrix <- as.matrix(jaccard_matrix)
 
 # convert dissimilarity to similarity
@@ -1118,26 +1088,71 @@ jaccard_sim_matrix <- 1-jaccard_matrix
 # self-similarity
 diag(jaccard_sim_matrix) <- 1
 
-jaccard_sim_matrix |> 
-  as.data.frame() |> 
-  rownames_to_column(var = "Var1") |> 
-  pivot_longer(-Var1, names_to = "Var2", values_to = "Similarity") |> 
+column_order <- c("Avg. RT", "SD RT", "SD within", "Longstring", "Mode", "Antonym", "LPA", "IRT", "Single", "Double")
+
+similarity_plot <- jaccard_sim_matrix |>
+  as.data.frame() |>
+  rownames_to_column(var = "Var1") |>
+  pivot_longer(-Var1, names_to = "Var2", values_to = "Similarity") |>
+  mutate(
+    Var1 = case_when(
+      Var1 == "flag_sd_within" ~ "SD within",
+      Var1 == "flag_average_response_time" ~ "Avg. RT",
+      Var1 == "flag_sd_response_time" ~ "SD RT",
+      Var1 == "flag_longstring" ~ "Longstring",
+      Var1 == "flag_mode" ~ "Mode",
+      Var1 == "flag_anto" ~ "Antonym",
+      Var1 == "flag_lpa" ~ "LPA",
+      Var1 == "flag_irt" ~ "IRT",
+      Var1 == "single_hurdle" ~ "Single",
+      Var1 == "double_hurdle" ~ "Double",
+      TRUE ~ Var1
+    ),
+    Var2 = case_when(
+      Var2 == "flag_sd_within" ~ "SD within",
+      Var2 == "flag_average_response_time" ~ "Avg. RT",
+      Var2 == "flag_sd_response_time" ~ "SD RT",
+      Var2 == "flag_longstring" ~ "Longstring",
+      Var2 == "flag_mode" ~ "Mode",
+      Var2 == "flag_anto" ~ "Antonym",
+      Var2 == "flag_lpa" ~ "LPA",
+      Var2 == "flag_irt" ~ "IRT",
+      Var2 == "single_hurdle" ~ "Single",
+      Var2 == "double_hurdle" ~ "Double",
+      TRUE ~ Var2
+    )) |> 
+  mutate(
+    Var1 = factor(Var1, levels = column_order),
+    Var2 = factor(Var2, levels = column_order),
+    text_color = if_else(Var1 == Var2, "white", "black")
+  ) |>
   ggplot(aes(x = Var1, y = Var2, fill = Similarity)) +
-  geom_tile(color = "white") + 
-  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
-                       midpoint = 0.5, limit = c(0,1), space = "Lab",
-                       name="Jaccard\nSimilarity") +
-  theme_bs() +
-  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1), 
-        axis.title.x = element_blank(), 
-        axis.title.y = element_blank(), 
-        panel.grid.major = element_blank(), 
-        panel.border = element_blank(),
-        legend.justification = c(1, 0),
-        legend.position = c(0.6, 0.7), 
-        legend.direction = "horizontal") +
-  coord_fixed() + 
-  geom_text(aes(label = round(Similarity, 2)), color = "black", size = 3)
+  geom_tile(color = "white") +
+  scale_fill_gradient(
+    low = "white",
+    high = fill_color,
+    limit = c(0, 1),
+    space = "Lab",
+    name = "Jaccard\nSimilarity"
+  ) +
+  theme_bs() + 
+  theme(
+    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.border = element_blank(),
+    legend.justification = c(1, 0),
+    legend.position = "none"
+  ) +
+  coord_fixed() +
+  geom_text(aes(label = round(Similarity, 2), color = text_color), size = 3.8) +
+  scale_color_identity()
+
+similarity_plot
+
+ggsave("similarity_plot.pdf", similarity_plot, path = here::here("figures"),
+       width = 7, height = 5)
 
 ```
 
