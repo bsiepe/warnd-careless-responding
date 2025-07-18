@@ -55,7 +55,8 @@ pacman::p_load(
   "tidyr",
   "vegan",
   "tibble",
-  "purrr"
+  "purrr",
+  "flextable"
 )
 
 
@@ -317,7 +318,8 @@ saveRDS(careless_results_list, file = here::here("output", "careless_results_lis
 ```
 
 Reload the dataframe:
-```{r reload-careless}
+```{r}
+#| label: reload-careless
 careless_results_list <- readRDS(here::here("output", "careless_results_list.RDS"))
 df_careless <- bind_rows(careless_results_list)
 ```
@@ -587,6 +589,77 @@ for(model in models) {
 ```
 
 
+## Multiverse descriptives
+
+Instead of computing correlations or similarities, we can simply calculate the number of responses flagged as careless for each combination of indices: 
+
+```{r}
+#| label: multiverse-careless-pct
+#| eval: !expr params$rerun
+careless_list <- lapply(careless_results_list, function(x){
+    x |> 
+    dplyr::select(external_id, counter, starts_with("flag"))
+})
+
+rm(careless_results_list)
+
+# compute careless responding flags
+flag_list <- lapply(careless_list, function(x){
+    x |> 
+    rowwise() |> 
+    dplyr::mutate(flag_sum = sum(flag_sd_within, flag_average_response_time, flag_sd_response_time, flag_longstring, flag_mode, flag_anto, na.rm = TRUE)) |>
+    mutate(flag_sum1 = ifelse(flag_sum == 0, 0, 1),
+            flag_sum2 = ifelse(flag_sum <2, 0, 1))
+})
+
+# remove unnecessary data attributes
+flag_list <- lapply(flag_list, function(x){
+  attr(x, "groups") <- NULL
+  x <- ungroup(x)
+  x
+})
+
+rm(careless_list)
+
+# for each list entry, calculate careless responding proportions
+# normed by the number of responses in our main df
+flag_df <- readRDS(here::here("output", "flag_df.RDS"))
+
+total_obs <- nrow(flag_df)
+non_missing_obs <- flag_df |> 
+  filter(!is.na(flag_sd_within)) |> 
+  nrow()
+
+
+flag_summary <- lapply(flag_list, function(x){
+  x |> 
+  ungroup() |> 
+  select(!c(external_id, counter, flag_sum)) |> 
+  summarize(across(everything(), 
+                   ~sum(., na.rm = TRUE))) |> 
+  mutate(across(everything(), 
+                ~ round(./ non_missing_obs * 100, 3))) 
+})
+
+rm(flag_list)
+
+# attach specification information
+flag_multiverse <- do.call(rbind, flag_summary) |> 
+  bind_cols(specification_grid)
+
+
+saveRDS(flag_multiverse, here::here("output", "flag_multiverse.RDS"))
+```
+
+Display:
+```{r}
+#| label: multiverse-flag-table
+
+flag_multiverse |> 
+  knitr::kable()
+```
+
+
 
 # Descriptives & Visualizations
 
@@ -595,7 +668,6 @@ Numbers in parentheses represent first and third quartiles.
 ```{r}
 df_indices |>   
   mutate(k_values = as.factor(k_values), 
-         # syno_violations = as.factor(syno_violations), 
          anto_violations = as.factor(anto_violations), 
          longstring_count = as.factor(longstring_count)) |> 
   gtsummary::tbl_summary(include = !c(external_id, counter),
@@ -606,7 +678,7 @@ df_indices |>
 
 ## Main cutoffs
 
-Above, we defined the main default cutoffs that we use for the paper. We now check how many responses are marked as careless for each of the indices (in percent of all responses):
+Above, we defined the main default cutoffs that we use for the paper. We now check how many responses are marked as careless for each of the indices (in percent of all responses). Please note that we obtain slightly different percentages (second decimal difference) to the results in @sec-overview-indices. This difference occurs due to the way in which missing values are recorded. Here, we calculate them based on the within-assessment SD - below, we calculate them based on the missings for each individual careless response flag. For the overview in the manuscript, we keep it as it is here. 
 ```{r}
 flag_df <- readRDS(here::here("output", "flag_df.RDS"))
 
@@ -621,7 +693,7 @@ flag_df |>
   summarize(across(everything(), 
                    ~sum(., na.rm = TRUE))) |> 
   mutate(across(everything(), 
-                ~ round(./ non_missing_obs * 100, 2))) |> 
+                ~ round(./ non_missing_obs * 100, 3))) |> 
   knitr::kable()
 
 ```
@@ -647,8 +719,8 @@ df_jaccard_spec |>
 ```
 
 How would these change if we slightly changed one cutoff, e.g., the SD response time cutoff to 0.6?
-
 ```{r}
+#| label: change-sd-cutoff
 df_jaccard_spec |> 
     filter(
     sd_within_cutoff == 1.25 &
@@ -663,6 +735,95 @@ df_jaccard_spec |>
     "Prop. Careless Double Hurdle" = n_careless_sum2
   ) |> 
   knitr::kable()
+```
+
+
+
+## Overview over all single-index cutoffs {#sec-overview-indices}
+
+Here, we provide an overview over the proportion of responses flagged as careless for each individual index cutoff:
+```{r}
+#| label: index-overview-table
+# cutoff values for each index
+cutoffs <- list(
+  sd_within = c(0.75, 1, 1.25),
+  avg_rt = c(1, 1.5, 2),
+  sd_rt = c(0.4, 0.6, 1),
+  longstring = c(6, 7, 8),
+  mode = c(5, 6),
+  anto = c(0)
+)
+
+# calculate proportions for each index
+results <- map_dfr(names(cutoffs), function(index_name) {
+  cutoff_values <- cutoffs[[index_name]]
+  
+  # determine the column name and comparison operator
+  col_name <- case_when(
+    index_name == "sd_within" ~ "assessment_sd",
+    index_name == "avg_rt" ~ "average_response_time", 
+    index_name == "sd_rt" ~ "sd_response_time",
+    index_name == "longstring" ~ "longstring_count",
+    index_name == "mode" ~ "mode_count",
+    index_name == "anto" ~ "anto_violations"
+  )
+  
+  # calculate proportions for each cutoff
+  props <- map_dbl(cutoff_values, function(cutoff) {
+    valid_n <- sum(!is.na(df_indices[[col_name]]))
+    if (index_name %in% c("longstring", "mode", "anto")) {
+      sum(df_indices[[col_name]] > cutoff, na.rm = TRUE) / valid_n
+    } else {
+      sum(df_indices[[col_name]] < cutoff, na.rm = TRUE) / valid_n
+    }
+  })
+  
+  # create a tibble with proper column names
+  result <- tibble(index = index_name)
+  for (i in seq_along(cutoff_values)) {
+    col_name <- paste0(index_name, "_", cutoff_values[i])
+    result[[col_name]] <- props[i]
+  }
+  
+  result
+})
+
+clean_table <- results |>
+  rowwise() |>
+  mutate(
+    cutoff_values = case_when(
+      index == "sd_within" ~ list(c(sd_within_0.75, sd_within_1, sd_within_1.25)),
+      index == "avg_rt" ~ list(c(avg_rt_1, avg_rt_1.5, avg_rt_2)),
+      index == "sd_rt" ~ list(c(sd_rt_0.4, sd_rt_0.6, sd_rt_1)),
+      index == "longstring" ~ list(c(longstring_6, longstring_7, longstring_8)),
+      index == "mode" ~ list(c(mode_5, mode_6)),
+      index == "anto" ~ list(c(anto_0))
+    ),
+    cutoff_labels = case_when(
+      index == "sd_within" ~ list(c("0.75", "1.0", "1.25")),
+      index == "avg_rt" ~ list(c("1.0", "1.5", "2.0")),
+      index == "sd_rt" ~ list(c("0.4", "0.6", "1.0")),
+      index == "longstring" ~ list(c("6", "7", "8")),
+      index == "mode" ~ list(c("5", "6")),
+      index == "anto" ~ list(c("0"))
+    )
+  ) |>
+  unnest_longer(c(cutoff_values, cutoff_labels)) |>
+  select(index, cutoff_labels, cutoff_values) |>
+  mutate(cutoff_values = paste0(round(cutoff_values, 4) * 100, " %")) |> 
+  pivot_wider(names_from = cutoff_labels, values_from = cutoff_values) |>
+  ungroup()
+
+# create flextable
+ft <- clean_table |>
+  flextable() |>
+  set_header_labels(index = "Index") |>
+  theme_vanilla() |>
+  autofit() |>
+  align(align = "center", part = "all") 
+
+ft
+  
 ```
 
 
@@ -816,6 +977,8 @@ df_indices_models <- lpa_res |>
 
 ## Large grid plot with indicators and model results
 
+
+### LPA and Mixture IRT
 Create distribution plot for the LPA and mixture IRT: 
 
 ```{r}
@@ -965,53 +1128,66 @@ irt_dist_plot_binned
 ```
 
 
+### Combined with indices plots
+
 Now combine these plots with all individual indices plots:
 ```{r giga-plot}
-# Create individual plots for each index
+# create individual plots for each index
 df_integer_long <- df_indices |>
   select(!c(external_id, counter, k_values)) |>
   select(
     anto_violations,
-    # syno_violations,
     longstring_count,
     mode_count
   ) |>
   rename(
-    "Likelihood of antonym violation" = "anto_violations",
+    "Antonym violation" = "anto_violations",
     "Long string count" = "longstring_count",
     "Items that fall at the mode" = "mode_count"
   ) |>
   pivot_longer(cols = everything(), names_to = "index") |>
-  filter(!is.na(value))
+  filter(!is.na(value)) |>
+  # recode antonym violation 
+  mutate(
+    value_label = case_when(
+      index == "Antonym violation" & value == 0 ~ "no",
+      index == "Antonym violation" & value == 1 ~ "yes",
+      TRUE ~ as.character(value)
+    ),
+    # create labels for display
+    value_numeric = value,
+    value_display = if_else(index == "Antonym violation", value_label, as.character(value))
+  )
 
 # create list of individual bar plots
 integer_plot_list <- df_integer_long |>
   group_split(index) |>
   map(~ {
     index_label <- unique(.x$index)
-
-    p <- ggplot(.x, aes(x = value, y = after_stat(prop))) +
+    
+    
+    p <- ggplot(.x, aes(x = value_numeric, y = after_stat(prop))) +
       geom_bar(fill = fill_color) +
       scale_y_continuous(expand = c(0, 0), labels = scales::percent_format()) +
       theme_bs() +
       labs(x = "", y = "") +
       ggtitle(index_label)
-
+    
     # customize x-axis for the antonym violation (binary) plot
-    if (index_label == "Likelihood of antonym violation") {
+    if (index_label == "Antonym violation") {
       p <- p + scale_x_continuous(
         breaks = c(0, 1),
+        labels = c("no", "yes"), 
         limits = c(-0.5, 1.5),
         expand = c(0, 0)
       )
     } else {
       p <- p + scale_x_continuous(
         breaks = 0:11,
-        limits = c(-0.6, 11.1),
+        limits = c(-0.6, 9.1),
         expand = c(0, 0)
       )
     }
-
     p
   })
 
@@ -1028,7 +1204,7 @@ df_cont_long <- df_indices |>
   ) |>
   rename(
     "Within-assessment response SD" = "assessment_sd",
-    "Mahalanobis dstance" = "mahalanobis_dist",
+    "Mahalanobis distance" = "mahalanobis_dist",
     "Robust PCA distance" = "robustpca_dist",
     "Average time-per-item" = "average_response_time",
     "SD time-per-item" = "sd_response_time"
@@ -1040,7 +1216,8 @@ df_cont_long <- df_indices |>
 cont_plot_list <- df_cont_long |>
   group_split(index) |>
   map(~ {
-    ggplot(.x, aes(x = value)) +
+    # scaled densities
+    ggplot(.x, aes(x = value, ..scaled..)) +
       geom_density(fill = fill_color, color = fill_color, adjust = 1 / 4) +
       scale_y_continuous(expand = c(0, 0)) +
       theme_bs() +
@@ -1065,6 +1242,117 @@ ggsave("indices_models_overview.pdf",
 ```
 
 
+Alternatively, we can add the same plot without the two models:
+
+```{r}
+#| label: distribution-plot-indices-only
+#| warning: false
+plot_grid_list <- c(integer_plot_list, cont_plot_list)
+
+# reorder based on order in methods section
+plot_grid_list <- plot_grid_list[c(3, 2, 8, 5, 6, 1, 4, 7)]
+
+combined_plot_indices <- cowplot::plot_grid(
+  plotlist = plot_grid_list,
+  ncol = 2,  
+  align = "hv"
+)
+
+ggsave("indices_overview_twocol.pdf", 
+       plot = combined_plot_indices, 
+       path = here::here("figures"),
+       height = 14, 
+       width = 11)
+```
+
+
+
+## Additional plot with number of careless observations
+
+In one plot, we show the number of careless observations with a single and double-hurdle approach and the two models. 
+
+```{r}
+#| label: careless-response-number-figure
+
+# create method labels
+method_labels <- c(
+  "flag_lpa" = "Latent Profile Analysis",
+  "flag_irt" = "Mixture IRT", 
+  "single_hurdle" = "Single Hurdle",
+  "double_hurdle" = "Double Hurdle"
+)
+
+model_hurdle_counts <- lpa_res |> 
+  left_join(irt_res, by = c("external_id", "counter")) |> 
+  left_join(flag_df, by = c("external_id", "counter")) |> 
+    mutate(across(where(is.logical), ~ as.integer(.))) |> 
+    mutate(flag_lpa = ifelse(LPA_profile != 2, 1, 0),
+           flag_irt = ifelse(mixtureIRT == 1, 0, 1)) |> 
+  # recode to obtain single hurdle and multiple hurdle approach
+  mutate(
+    single_hurdle = if_else(flag_sum == 0, 0, 1),
+    double_hurdle = if_else(flag_sum < 2, 0, 1)
+  ) |> 
+  select(external_id, flag_lpa, flag_irt, single_hurdle, double_hurdle) |> group_by(external_id) |> 
+  summarize(across(everything(), sum)) |> 
+  select(!external_id) |> 
+    pivot_longer(everything(), names_to = "method", values_to = "count") |>
+  filter(!is.na(count)) |> 
+  mutate(method = factor(method, levels = names(method_labels)))
+
+
+
+# create bins with same breaks for all methods
+binned_df <- model_hurdle_counts |>
+  mutate(
+    careless_bin = cut(
+      count,
+      breaks = c(-Inf, 0, 10, 25, 50, 100, 200, Inf),
+      labels = c("0", "1–10", "11–25", "26–50", "51–100", "101–200", "201+"),
+      right = TRUE
+    )
+  )
+
+# summarize proportions by method and bin
+summary_df <- binned_df |>
+  group_by(method, careless_bin) |>
+  summarise(n = n(), .groups = "drop") |>
+  group_by(method) |>
+  mutate(percent = n / sum(n)) |>
+  ungroup()
+
+
+
+# plot
+careless_dist_plot <- summary_df |>
+  ggplot(aes(x = careless_bin, y = percent)) +
+  geom_bar(stat = "identity",
+           show.legend = FALSE,
+           fill = fill_color) +
+  ggh4x::facet_wrap2( ~ method, 
+                      labeller = labeller(method = method_labels),
+                      axes = "all")  +
+  scale_y_continuous(
+    limits = c(0, 0.75),
+    expand = c(0, 0),
+    labels = scales::percent_format()
+  ) +
+  theme_bs() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    strip.text = element_text(size = 10, face = "bold")
+  ) +
+  labs(x = "Number of Careless Responses", y = "Proportion of Participants")
+
+careless_dist_plot
+
+
+ggsave("careless_count_plot.pdf", 
+       plot = careless_dist_plot, 
+       path = here::here("figures"),
+       height = 9, 
+       width = 11)
+```
 
 
 
@@ -1088,7 +1376,7 @@ jaccard_sim_matrix <- 1-jaccard_matrix
 # self-similarity
 diag(jaccard_sim_matrix) <- 1
 
-column_order <- c("Avg. RT", "SD RT", "SD within", "Longstring", "Mode", "Antonym", "LPA", "IRT", "Single", "Double")
+column_order <- c("Longstring", "Mode", "SD within", "Antonym", "Avg. RT", "SD RT", "Single", "Double", "LPA", "IRT")
 
 similarity_plot <- jaccard_sim_matrix |>
   as.data.frame() |>
@@ -1123,7 +1411,7 @@ similarity_plot <- jaccard_sim_matrix |>
     )) |> 
   mutate(
     Var1 = factor(Var1, levels = column_order),
-    Var2 = factor(Var2, levels = column_order),
+    Var2 = factor(Var2, levels = rev(column_order)),
     text_color = if_else(Var1 == Var2, "white", "black")
   ) |>
   ggplot(aes(x = Var1, y = Var2, fill = Similarity)) +
