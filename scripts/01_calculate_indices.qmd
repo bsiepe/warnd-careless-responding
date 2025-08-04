@@ -56,11 +56,14 @@ pacman::p_load(
   "vegan",
   "tibble",
   "purrr",
-  "flextable"
+  "flextable",
+  "patchwork"
 )
 
-
 source(here("scripts", "00_functions.R"))
+
+# use color based on the Johnson palette from MetBrewer
+fill_color <- "#132b69"
 
 set.seed(35032)  
 ```
@@ -360,6 +363,32 @@ saveRDS(flag_df, file = here::here("output", "flag_df.RDS"))
 ```
 
 
+Additionally, for purpose of comparison, we can extract the results for the most lenient cutoffs: 
+
+```{r}
+lenient_id <- specification_grid |>
+  mutate(id = row_number()) |> 
+  filter(
+    sd_within_cutoff == 0.75 &
+      average_response_time_cutoff == 1 &
+      sd_response_time_cutoff == 0.4 &
+      longstring_cutoff == 8 & mode_cutoff == 6
+  ) |> 
+    pull(id)
+
+
+lenient_df <- careless_results_list[[lenient_id]]
+
+# apply multiple hurdle approach
+lenient_flag_df <- lenient_df |> 
+  dplyr::select(external_id, counter, starts_with("flag")) |> 
+  rowwise() |> 
+  mutate(flag_sum = sum(flag_sd_within, flag_average_response_time, flag_sd_response_time, flag_longstring, flag_mode, flag_anto, na.rm = TRUE)) 
+
+
+saveRDS(lenient_flag_df, file = here::here("output", "lenient_flag_df.RDS"))
+```
+
 
 ## Checking impact of excluding careless responses
 
@@ -654,7 +683,6 @@ saveRDS(flag_multiverse, here::here("output", "flag_multiverse.RDS"))
 Display:
 ```{r}
 #| label: multiverse-flag-table
-
 flag_multiverse |> 
   knitr::kable()
 ```
@@ -695,7 +723,6 @@ flag_df |>
   mutate(across(everything(), 
                 ~ round(./ non_missing_obs * 100, 3))) |> 
   knitr::kable()
-
 ```
 
 
@@ -737,6 +764,26 @@ df_jaccard_spec |>
   knitr::kable()
 ```
 
+
+### Comparison to Sensitivity Cutoffs
+
+Above, we also defined some cutoffs for sensitivity checks. We chose the most lenient cutoffs. 
+Which percentage of careless responding do these indicate?
+
+```{r}
+#| label: sensitivity-cutoffs
+lenient_flag_df |> 
+  ungroup() |> 
+  select(!c(external_id, counter)) |> 
+  mutate(flag_sum1 = ifelse(flag_sum == 0, 0, 1),
+          flag_sum2 = ifelse(flag_sum <2, 0, 1)) |> 
+  summarize(across(everything(), 
+                   ~sum(., na.rm = TRUE))) |> 
+  mutate(across(everything(), 
+                ~ round(./ non_missing_obs * 100, 3))) |> 
+  knitr::kable()
+
+```
 
 
 ## Overview over all single-index cutoffs {#sec-overview-indices}
@@ -836,10 +883,6 @@ kValues seem to be useless, so we filter them out here. Also, we filter out extr
 
 We first create a plot for all integer/proportion indices: 
 ```{r}
-# use color based on the Johnson palette from MetBrewer
-fill_color <- "#132b69"
-
-
 # A function factory for getting integer y-axis values.
 # (https://gist.github.com/jhrcook/eb7b63cc57c683a6eb4986c4107a88ec)
 integer_breaks <- function(n = 5, ...) {
@@ -1269,6 +1312,7 @@ ggsave("indices_overview_twocol.pdf",
 
 ## Additional plot with number of careless observations
 
+
 In one plot, we show the number of careless observations with a single and double-hurdle approach and the two models. 
 
 ```{r}
@@ -1355,11 +1399,99 @@ ggsave("careless_count_plot.pdf",
 ```
 
 
+We can create the same plot also including the sensitivity cutoffs: 
+
+```{r}
+# create method labels
+method_labels <- c(
+  "flag_lpa" = "Latent Profile Analysis",
+  "flag_irt" = "Mixture IRT", 
+  "single_hurdle_default" = "Single Hurdle (Default)",
+  "double_hurdle_default" = "Double Hurdle (Default)",
+  "single_hurdle_sensitivity" = "Single Hurdle (Sensitivity)",
+  "double_hurdle_sensitivity" = "Double Hurdle (Sensitivity)"
+)
+
+model_hurdle_counts <- lpa_res |> 
+  left_join(irt_res, by = c("external_id", "counter")) |> 
+  left_join(flag_df, by = c("external_id", "counter")) |> 
+  left_join(lenient_flag_df, by = c("external_id", "counter"), suffix = c("_default", "_sensitivity")) |> 
+  mutate(across(where(is.logical), ~ as.integer(.))) |> 
+  mutate(flag_lpa = ifelse(LPA_profile != 2, 1, 0),
+         flag_irt = ifelse(mixtureIRT == 1, 0, 1)) |> 
+  # recode to obtain single hurdle and multiple hurdle approach for both specifications
+  mutate(
+    single_hurdle_default = if_else(flag_sum_default == 0, 0, 1),
+    double_hurdle_default = if_else(flag_sum_default < 2, 0, 1),
+    single_hurdle_sensitivity = if_else(flag_sum_sensitivity == 0, 0, 1),
+    double_hurdle_sensitivity = if_else(flag_sum_sensitivity < 2, 0, 1)
+  ) |> 
+  select(external_id, flag_lpa, flag_irt, single_hurdle_default, double_hurdle_default, 
+         single_hurdle_sensitivity, double_hurdle_sensitivity) |> 
+  group_by(external_id) |> 
+  summarize(across(everything(), sum)) |> 
+  select(!external_id) |> 
+  pivot_longer(everything(), names_to = "method", values_to = "count") |>
+  filter(!is.na(count)) |> 
+  mutate(method = factor(method, levels = names(method_labels)))
+
+# create bins with same breaks for all methods
+binned_df <- model_hurdle_counts |>
+  mutate(
+    careless_bin = cut(
+      count,
+      breaks = c(-Inf, 0, 10, 25, 50, 100, 200, Inf),
+      labels = c("0", "1–10", "11–25", "26–50", "51–100", "101–200", "201+"),
+      right = TRUE
+    )
+  )
+
+# summarize proportions by method and bin
+summary_df <- binned_df |>
+  group_by(method, careless_bin) |>
+  summarise(n = n(), .groups = "drop") |>
+  group_by(method) |>
+  mutate(percent = n / sum(n)) |>
+  ungroup()
+
+# plot
+careless_dist_plot_sens <- summary_df |>
+  ggplot(aes(x = careless_bin, y = percent)) +
+  geom_bar(stat = "identity",
+           show.legend = FALSE,
+           fill = fill_color) +
+  ggh4x::facet_wrap2( ~ method, 
+                      labeller = labeller(method = method_labels),
+                      axes = "all",
+                      nrow = 3)  +
+  scale_y_continuous(
+    limits = c(0, 0.75),
+    expand = c(0, 0),
+    labels = scales::percent_format()
+  ) +
+  theme_bs() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    strip.text = element_text(size = 10, face = "bold")
+  ) +
+  labs(x = "Number of Careless Responses", y = "Proportion of Participants")
+
+careless_dist_plot_sens
+
+ggsave("careless_count_plot_sensitivity.pdf", 
+       plot = careless_dist_plot_sens, 
+       path = here::here("figures"),
+       height = 13.5, 
+       width = 11)  
+```
+
 
 
 ## Jaccard Similarity of Indices and Model Results
 
 We can visualize the classification of careless responding based on indices and and model results with a Jaccard similarity heatmap. 
+
+### Main Specification
 
 ```{r jaccard-similarity}
 jaccard_matrix <- vegan::vegdist(
@@ -1443,6 +1575,301 @@ ggsave("similarity_plot.pdf", similarity_plot, path = here::here("figures"),
        width = 7, height = 5)
 
 ```
+
+We create the same plot with a row indicating the mean similarity for each method:
+```{r similarity-plot-mean}
+# Calculate mean similarities (excluding diagonal)
+mean_similarities <- sapply(1:ncol(jaccard_sim_matrix), function(i) {
+  col_vals <- jaccard_sim_matrix[, i]
+  mean(col_vals[-i])  # exclude diagonal element
+})
+names(mean_similarities) <- colnames(jaccard_sim_matrix)
+
+# main similarity data
+similarity_data <- jaccard_sim_matrix |>
+  as.data.frame() |>
+  rownames_to_column(var = "Var1") |>
+  pivot_longer(-Var1, names_to = "Var2", values_to = "Similarity") |>
+  mutate(
+    Var1 = case_when(
+      Var1 == "flag_sd_within" ~ "SD within",
+      Var1 == "flag_average_response_time" ~ "Avg. RT",
+      Var1 == "flag_sd_response_time" ~ "SD RT",
+      Var1 == "flag_longstring" ~ "Longstring",
+      Var1 == "flag_mode" ~ "Mode",
+      Var1 == "flag_anto" ~ "Antonym",
+      Var1 == "flag_lpa" ~ "LPA",
+      Var1 == "flag_irt" ~ "IRT",
+      Var1 == "single_hurdle" ~ "Single",
+      Var1 == "double_hurdle" ~ "Double",
+      TRUE ~ Var1
+    ),
+    Var2 = case_when(
+      Var2 == "flag_sd_within" ~ "SD within",
+      Var2 == "flag_average_response_time" ~ "Avg. RT",
+      Var2 == "flag_sd_response_time" ~ "SD RT",
+      Var2 == "flag_longstring" ~ "Longstring",
+      Var2 == "flag_mode" ~ "Mode",
+      Var2 == "flag_anto" ~ "Antonym",
+      Var2 == "flag_lpa" ~ "LPA",
+      Var2 == "flag_irt" ~ "IRT",
+      Var2 == "single_hurdle" ~ "Single",
+      Var2 == "double_hurdle" ~ "Double",
+      TRUE ~ Var2
+    ),
+    row_type = "main"
+  )
+
+# mean row data
+mean_data <- data.frame(
+  Var1 = "Mean",
+  Var2 = names(mean_similarities),
+  Similarity = as.numeric(mean_similarities),
+  row_type = "mean"
+) |>
+  mutate(
+    Var2 = case_when(
+      Var2 == "flag_sd_within" ~ "SD within",
+      Var2 == "flag_average_response_time" ~ "Avg. RT",
+      Var2 == "flag_sd_response_time" ~ "SD RT",
+      Var2 == "flag_longstring" ~ "Longstring",
+      Var2 == "flag_mode" ~ "Mode",
+      Var2 == "flag_anto" ~ "Antonym",
+      Var2 == "flag_lpa" ~ "LPA",
+      Var2 == "flag_irt" ~ "IRT",
+      Var2 == "single_hurdle" ~ "Single",
+      Var2 == "double_hurdle" ~ "Double",
+      TRUE ~ Var2
+    )
+  )
+
+# combine data
+combined_data <- rbind(similarity_data, mean_data) |>
+  mutate(
+    text_color = case_when(
+      row_type == "mean" ~ "black",
+      Var1 == Var2 ~ fill_color,
+      TRUE ~ "black"
+    ),
+    Var1 = factor(Var1, levels = c("Mean", rev(column_order))),
+    Var2 = factor(Var2, levels = column_order)
+  )
+
+
+similarity_plot_mean <- combined_data |>
+  ggplot(aes(x = Var2, y = Var1, fill = Similarity)) +
+  geom_tile(color = "white", size = ifelse(combined_data$row_type == "mean", 2, 0.5)) +
+  # Add a thicker separator line above the mean row
+  geom_hline(yintercept = 1.5, color = "#6d6d6e", linewidth = .5, linetype = 2) +
+  scale_fill_gradient(
+    low = "white",
+    high = fill_color,  
+    limit = c(0, 1),
+    space = "Lab",
+    name = "Jaccard\nSimilarity"
+  ) +
+  theme_bs() + 
+  theme(
+    axis.text.x = element_text(angle = 45, vjust = 0, hjust = 0),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.border = element_blank(),
+    legend.justification = c(1, 0),
+    legend.position = "none",
+    axis.text.x.top = element_text(angle = 45, vjust = 0, hjust = 0),
+    axis.text.x.bottom = element_blank(),
+    plot.margin = margin(t = 5,r = 1,b = 5,l = 1)
+  ) +
+  scale_x_discrete(position = "top") +
+  coord_fixed() +
+  geom_text(aes(label = round(Similarity, 2), color = text_color), size = 3.8) +
+  scale_color_identity()+
+  labs(title = "Default")
+
+similarity_plot_mean
+
+ggsave("similarity_plot_mean.pdf", similarity_plot_mean, path = here::here("figures"),
+       width = 7, height = 5)
+```
+
+
+### Lenient/Sensitivity Specification
+
+Instead of using the main specification, we can use the most lenient one here:
+```{r}
+df_indices_models_lenient <- lpa_res |> 
+  left_join(irt_res, by = c("external_id", "counter")) |> 
+  left_join(lenient_flag_df, by = c("external_id", "counter")) |> 
+    mutate(across(where(is.logical), ~ as.integer(.))) |> 
+    mutate(flag_lpa = ifelse(LPA_profile != 2, 1, 0),
+           flag_irt = ifelse(mixtureIRT == 1, 0, 1)) |> 
+   select(contains("flag")) |> 
+  # recode to obtain single hurdle and multiple hurdle approach
+  mutate(
+    single_hurdle = if_else(flag_sum == 0, 0, 1),
+    double_hurdle = if_else(flag_sum < 2, 0, 1)
+  ) |> 
+  # then remove raw sum
+  select(!flag_sum)
+```
+
+We then re-create the Jaccard similarity plot: 
+
+```{r}
+jaccard_matrix <- vegan::vegdist(
+  t(df_indices_models_lenient),
+  na.rm = TRUE,
+  method = "jaccard",
+  binary = TRUE
+)
+jaccard_matrix <- as.matrix(jaccard_matrix)
+
+# convert dissimilarity to similarity
+jaccard_sim_matrix <- 1-jaccard_matrix
+
+# self-similarity
+diag(jaccard_sim_matrix) <- 1
+
+column_order <- c("Longstring", "Mode", "SD within", "Antonym", "Avg. RT", "SD RT", "Single", "Double", "LPA", "IRT")
+
+mean_similarities <- sapply(1:ncol(jaccard_sim_matrix), function(i) {
+  col_vals <- jaccard_sim_matrix[, i]
+  mean(col_vals[-i])  # exclude diagonal element
+})
+names(mean_similarities) <- colnames(jaccard_sim_matrix)
+
+# main similarity data
+similarity_data <- jaccard_sim_matrix |>
+  as.data.frame() |>
+  rownames_to_column(var = "Var1") |>
+  pivot_longer(-Var1, names_to = "Var2", values_to = "Similarity") |>
+  mutate(
+    Var1 = case_when(
+      Var1 == "flag_sd_within" ~ "SD within",
+      Var1 == "flag_average_response_time" ~ "Avg. RT",
+      Var1 == "flag_sd_response_time" ~ "SD RT",
+      Var1 == "flag_longstring" ~ "Longstring",
+      Var1 == "flag_mode" ~ "Mode",
+      Var1 == "flag_anto" ~ "Antonym",
+      Var1 == "flag_lpa" ~ "LPA",
+      Var1 == "flag_irt" ~ "IRT",
+      Var1 == "single_hurdle" ~ "Single",
+      Var1 == "double_hurdle" ~ "Double",
+      TRUE ~ Var1
+    ),
+    Var2 = case_when(
+      Var2 == "flag_sd_within" ~ "SD within",
+      Var2 == "flag_average_response_time" ~ "Avg. RT",
+      Var2 == "flag_sd_response_time" ~ "SD RT",
+      Var2 == "flag_longstring" ~ "Longstring",
+      Var2 == "flag_mode" ~ "Mode",
+      Var2 == "flag_anto" ~ "Antonym",
+      Var2 == "flag_lpa" ~ "LPA",
+      Var2 == "flag_irt" ~ "IRT",
+      Var2 == "single_hurdle" ~ "Single",
+      Var2 == "double_hurdle" ~ "Double",
+      TRUE ~ Var2
+    ),
+    row_type = "main"
+  )
+
+# mean row data
+mean_data <- data.frame(
+  Var1 = "Mean",
+  Var2 = names(mean_similarities),
+  Similarity = as.numeric(mean_similarities),
+  row_type = "mean"
+) |>
+  mutate(
+    Var2 = case_when(
+      Var2 == "flag_sd_within" ~ "SD within",
+      Var2 == "flag_average_response_time" ~ "Avg. RT",
+      Var2 == "flag_sd_response_time" ~ "SD RT",
+      Var2 == "flag_longstring" ~ "Longstring",
+      Var2 == "flag_mode" ~ "Mode",
+      Var2 == "flag_anto" ~ "Antonym",
+      Var2 == "flag_lpa" ~ "LPA",
+      Var2 == "flag_irt" ~ "IRT",
+      Var2 == "single_hurdle" ~ "Single",
+      Var2 == "double_hurdle" ~ "Double",
+      TRUE ~ Var2
+    )
+  )
+
+# combine data
+combined_data <- rbind(similarity_data, mean_data) |>
+  mutate(
+    text_color = case_when(
+      row_type == "mean" ~ "black",
+      Var1 == Var2 ~ fill_color,
+      TRUE ~ "black"
+    ),
+    Var1 = factor(Var1, levels = c("Mean", rev(column_order))),
+    Var2 = factor(Var2, levels = column_order)
+  )
+
+
+similarity_plot_mean_lenient <- combined_data |>
+  ggplot(aes(x = Var2, y = Var1, fill = Similarity)) +
+  geom_tile(color = "white", size = ifelse(combined_data$row_type == "mean", 2, 0.5)) +
+  # Add a thicker separator line above the mean row
+  geom_hline(yintercept = 1.5, color = "#6d6d6e", linewidth = .5, linetype = 2) +
+  scale_fill_gradient(
+    low = "white",
+    high = fill_color,  
+    limit = c(0, 1),
+    space = "Lab",
+    name = "Jaccard\nSimilarity"
+  ) +
+  theme_bs() + 
+  theme(
+    axis.text.x = element_text(angle = 45, vjust = 0, hjust = 0),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.border = element_blank(),
+    legend.justification = c(1, 0),
+    legend.position = "none",
+    axis.text.x.top = element_text(angle = 45, vjust = 0, hjust = 0),
+    axis.text.x.bottom = element_blank(),
+    plot.margin = margin(t = 5,r = 1,b = 5,l = 1)
+  ) +
+  scale_x_discrete(position = "top") +
+  coord_fixed() +
+  geom_text(aes(label = round(Similarity, 2), color = text_color), size = 3.8) +
+  scale_color_identity()+
+  labs(title = "Sensitivity")
+
+similarity_plot_mean_lenient
+
+ggsave(
+  "similarity_plot_mean_lenient.pdf",
+  similarity_plot_mean_lenient,
+  path = here::here("figures"),
+  width = 7,
+  height = 5
+)
+```
+
+### Combine Specification Plots
+
+We combine both Jaccard similarity mean plots in one plot: 
+
+```{r}
+#| label: jaccard-plots-combined
+
+jaccard_plot_combined <- similarity_plot_mean + plot_spacer() +  similarity_plot_mean_lenient + plot_layout(ncol = 3, widths = c(1, 0.05, 1))
+
+ggsave(
+  "jaccard_plot_combined.pdf",
+  jaccard_plot_combined,
+  path = here::here("figures"),
+  width = 11,
+  height = 6
+)
+```
+
 
 
 
