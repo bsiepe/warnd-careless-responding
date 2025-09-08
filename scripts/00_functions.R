@@ -61,8 +61,6 @@ calc_mode_percentage <- function(data,
 
 
 
-# Time per item -----------------------------------------------------------
-
 
 
 
@@ -423,6 +421,70 @@ calc_longstring_counts <- function(data,
 }
 
 
+# Carelessness Analysis Helpers --------------------------------------------
+# flagging response as careless
+flag_careless <- function(df, cutoffs) {
+  df |>
+    mutate(
+      flag_sd_within = assessment_sd < cutoffs$sd_within_cutoff,
+      flag_average_response_time = average_response_time < cutoffs$average_response_time_cutoff,
+      flag_sd_response_time = sd_response_time < cutoffs$sd_response_time_cutoff,
+      flag_longstring = longstring_count > cutoffs$longstring_cutoff,
+      flag_mode = mode_count > cutoffs$mode_cutoff,
+      flag_anto = anto_violations > cutoffs$anto_cutoff
+    ) |>
+    mutate(spec_id = paste0("spec_", "sd_", cutoffs$sd_within_cutoff, "_",
+                            "avg_rt_",  cutoffs$average_response_time_cutoff, "_",
+                            "sd_rt_",  cutoffs$sd_response_time_cutoff, "_",
+                            "long_",  cutoffs$longstring_cutoff, "_",
+                            "mode_",  cutoffs$mode_cutoff, "_",
+                            "anto_", cutoffs$anto_cutoff))
+}
+
+# compute similarity in each combination of the multiverse
+compute_similarities <- function(flag_list, lpa_res, irt_res) {
+  imap(flag_list, function(flag_df, i) {
+    cat("Processing iteration", i, "of", length(flag_list), "\n")
+    
+    df_indices_models <- lpa_res |>
+      left_join(irt_res, by = c("external_id", "counter")) |>
+      left_join(flag_df, by = c("external_id", "counter")) |>
+      mutate(across(where(is.logical), ~ as.integer(.))) |>
+      # convert to binary
+      mutate(
+        flag_lpa = ifelse(LPA_profile != 2, 1, 0),
+        flag_irt = ifelse(mixtureIRT == 1, 0, 1),
+        flag_sum1 = ifelse(flag_sum == 0, 0, 1),
+        flag_sum2 = ifelse(flag_sum < 2, 0, 1)
+      ) |>
+      select(contains("flag"))
+    
+    # computing jaccard similarity
+    jaccard_matrix <- vegan::vegdist(
+      t(df_indices_models),
+      na.rm = TRUE,
+      method = "jaccard",
+      binary = TRUE
+    )
+    jaccard_matrix <- as.matrix(jaccard_matrix)
+    
+    # convert dissimilarity to similarity
+    jaccard_sim_matrix <- 1 - jaccard_matrix
+    diag(jaccard_sim_matrix) <- 1
+    
+    list(
+      n_careless_sum1 = sum(df_indices_models$flag_sum1 != 0, na.rm = TRUE),
+      n_careless_sum2 = sum(df_indices_models$flag_sum2 != 0, na.rm = TRUE),
+      n_careless_lpa = sum(df_indices_models$flag_lpa, na.rm = TRUE),
+      n_careless_irt = sum(df_indices_models$flag_irt, na.rm = TRUE),
+      jaccard_similarity1_lpa = jaccard_sim_matrix[["flag_sum1", "flag_lpa"]],
+      jaccard_similarity1_irt = jaccard_sim_matrix[["flag_sum1", "flag_irt"]],
+      jaccard_similarity2_lpa = jaccard_sim_matrix[["flag_sum2", "flag_lpa"]],
+      jaccard_similarity2_irt = jaccard_sim_matrix[["flag_sum2", "flag_irt"]]
+    )
+  })
+}
+
 
 # Visualization helpers ---------------------------------------------------
 theme_bs <- function(){
@@ -595,5 +657,16 @@ plot_specification <- function(mv_res,
           strip.text = element_text(size = rel(1.4)),
           axis.text.x = element_text(size = rel(1.2)),
           axis.title.x = element_text(size = rel(1.3)))
+}
+
+# A function factory for getting integer y-axis values.
+# (https://gist.github.com/jhrcook/eb7b63cc57c683a6eb4986c4107a88ec)
+integer_breaks <- function(n = 5, ...) {
+  fxn <- function(x) {
+    breaks <- floor(pretty(x, n, ...))
+    names(breaks) <- attr(breaks, "labels")
+    breaks
+  }
+  return(fxn)
 }
 
