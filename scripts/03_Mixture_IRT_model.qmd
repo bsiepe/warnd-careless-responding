@@ -1,0 +1,606 @@
+---
+title: "Online Supplement 3: Mixture IRT Model"
+subtitle: "For the Manuscript: Identifying Careless Responding in Ecological Momentary Assessment: Inconsistent Signals from Different Detection Methods in the WARN-D Data"
+
+author: 
+ - name: Leonie V.D.E. Vogelsmeier
+   orcid: 0000-0002-1666-7112
+   affiliations: Tilburg University
+ - name: Gudrun Eisele
+   orcid: 0000-0002-4466-3733
+   affiliations: KU Leuven
+ - name: Esther Ulitzsch
+   orcid: 0000-0002-9267-8542
+   affiliations: Centre for Educational Measurement, University of Oslo; Centre for Research on Equality in Education, University of Oslo
+
+date: "`r Sys.Date()`"
+format:
+  html:
+    toc: true
+    number-sections: true
+    theme: cosmo
+    code-fold: true
+    code-tools: true
+    code-summary: "Show the code"
+    fig-width: 7
+    fig-height: 4.5
+    fig-align: "center"
+    embed-resources: true
+execute:
+  message: false
+  warning: false
+  eval: true # run code?
+---
+
+# Background
+
+In this script, we investigate careless responding using a novel dynamic mixture model that integrates a mixture item response theory (IRT) model--or more specifically a graded response model (GRM)--(to classify observations as either attentive or careless based on their alignment with a measurement model for attentive responders or one assumed for careless responding) with a latent Markov model (a transition model to assess stability in response behavior over time). The method was proposed and evaluated in Vogelsmeier, Uglanova, et al. (2024). A brief summary of the method is presented in the main manuscript.
+
+For the implementation of the method, it is important to note that it can be considered a submodel of a method called latent Markov factor analysis (LMFA; a method that explores any changes in response behavior through exploratory mixture factor analysis), and as such, we can use the corresponding R-package `lmfa` with some adjustment. The `lmfa` package employs a step-wise estimation of the model that separates the estimation of the measurement part (specifying the nature of different response patterns) from the transition part (specifying how individuals change in their response behavior over time). The only necessary adjustment is replacing the fully exploratory mixture factor analysis of the `lmfa` package in the measurement part with a confirmatory mixture IRT model. The latter can be specified in the R package `mirt`. We will guide the user through the analysis step by step, explaining the intuition of the model and its interpretation. For a detailed technical description, please refer to the article in which the model was originally presented.
+
+It is important to note that this script includes more than the bare minimum code required to classify observations as attentive or careless. Therefore, we split each analysis step (**Step 1** to **Step 3**) into a **Necessary** **Part** and an **Optional Part**. The latter shows exploratory analyses intended to provide deeper insights. To further aid the separation of necessary and optional parts, we present the latter in [green]{style="color:green"} text, making it easy to distinguish them from the core parts required for the classification. Furthermore, the text corresponding to the two most important results (under the heading **Step 3**) is written in bold [**blue**]{style="color:blue"}.
+
+# Preliminaries
+
+We first install and load all relevant packages. Note that the package `lmfa` has to be installed from github as shown in the code below.
+
+```{r packages, warning = FALSE, message = FALSE}
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load("dplyr", "tidyr", "here", "ggplot2", "mirt", "devtools",
+               "knitr", "kableExtra","viridis")
+if (!require(lmfa)) devtools::install_github("leonievm/lmfa")
+library(lmfa)
+```
+
+# Data Preparation
+
+This section outlines all relevant preprocessing steps for the analysis. Note that the data characteristics are outlined in the main manuscript. First, we load the data, retaining only the necessary information for this specific analysis due to the large size of the dataset.
+
+```{r data-preparation, eval = FALSE}
+# load the complete data
+data <- read.csv(here::here("data",
+            "WARND_stage2_c1234_trainingset_before_15min_v2024_07_16.csv"))
+
+# keep data with a counter (without are the Sunday retrospective non-EMA 
+# observations (prompt_num = 5))
+data <- data[complete.cases(data[,c("counter")]),]
+
+# store indicator names for later (indicators 1:6 are NA, 7:9 are PA)
+indicators <- c("sad_d", "stressed_d", "overwhelm_d", "nervous_d", 
+                "ruminate_d", "irritable_d", "cheerful_d", "motivated_d", 
+                "relaxed_d")
+
+# keep data for which we have responses on the PA and NA indicators
+data <- data[complete.cases(data[,indicators]),]
+
+# keep only data that we need
+data <- data[,c("external_id", "counter", "record_time", indicators)]
+```
+
+```{r include = FALSE, eval = FALSE}
+# not visible in quarto output; manually applied once
+save(data, file = "data.RData")
+```
+
+```{r include = FALSE}
+# not visible in quarto output; used to load the data without preprocessing them again
+load("data.RData")
+indicators <- c("sad_d", "stressed_d", "overwhelm_d", "nervous_d", 
+                "ruminate_d", "irritable_d", "cheerful_d", "motivated_d", 
+                "relaxed_d")
+```
+
+For the analysis to function properly, all categories of the 7-point Likert scale must have been endorsed at least once for all indicators. We verify this using the following syntax:
+
+```{r include = TRUE}
+for (i in 1:9) {
+  tab <- table(data[, indicators[i]])
+  
+  if (all(tab != 0)) {
+    cat("All entries for indicator", indicators[i], "are non-zero.\n")
+  } else {
+    cat("Some entries for indicator", indicators[i], "are zero.\n")
+  }
+}
+```
+
+We conclude that all categories of the 7-point Likert scale have been endorsed at least once for all of the indicators.
+
+# Analysis
+
+As outlined above, the model estimation follows a stepwise approach. Although the main steps involve estimating the measurement and transition parts, but the approach actually consists of three steps.
+
+-   **Step 1**: Estimation of the measurement part; i.e., the constrained mixture IRT model.
+
+-   **Step 2**: Assignment of observations to the most likely mixture component based on probabilistic assignments, while capturing the inherent uncertainty in these assignments.
+
+-   **Step 3**: Estimation of the transition part, incorporating the uncertainty from Step 2. The latter is crucial for obtaining valid results regarding the (in)stability of response behavior.
+
+## Step 1
+
+### Necessary Part
+
+In Step 1, we specify a mixture model with two-dimensional attentive and unidimensional careless responding components. These mixture components (also simply mixtures or components) are additionally also referred to as states because individuals can change between these mixture components over time; we will use all terms interchangeably because different R packages also use different names. For the same reasons, the latent constructs are also referred to as factors or dimensions. As described in the main manuscript, the parameters of the attentive model are freely estimated, but the two-dimensional structure is determined by specifying which non-zero loadings are allowed via constraints. Below, we explain the specifications that are required for specifying such a mixture model in `mirt`. The specification is not immediately straightforward. The main difficulty is that `mirt` does not support specifying the number of factors and the non-zero loadings separately for the two mixtures. For example, one cannot say that the attentive mixture (`MIXTURE_1`) has two dimensions and the careless mixture (`MIXTURE_2`) has one dimension. This can only be achieved by specifying 2 dimensions for both mixtures and adding zero constraints for all loadings of the second dimension in the careless mixture. However, we explain the specification step by step and provide a visualization to illustrate what the constraints on the loadings and thresholds are intended to achieve. The specification is the following:
+
+```{r mirt specification}
+model_twodim <- 'F1 = 1-9
+                 F2 = 7-9
+                 COV = F1*F2
+                 START [MIXTURE_1] = (7-9, a1, 0.001)
+                 START [MIXTURE_2] = (1-9, a1, 1), (7-9, a2, 0.001), 
+                                     (GROUP, COV_21, 0.001), 
+                                     (GROUP, COV_22, 0.001)
+                 FIXED [MIXTURE_1] = (7-9, a1)
+                 FIXED [MIXTURE_2] = (1-9, a1), (7-9, a2), 
+                                     (GROUP, COV_21), 
+                                     (GROUP, COV_22)
+                 CONSTRAIN [MIXTURE_2] = (1-9, d1), (1-9, d2), (1-9, d3), 
+                                         (1-9, d4), (1-9, d5), (1-9, d6) 
+                 FREE [MIXTURE_2] = (GROUP, COV_11)
+                '
+```
+
+The arguments are the following:
+
+-   `MIXTURE_1` represents the attentive component. Items 1-6 represent the first dimension (negative affect; NA), and items 7-9 represent the second dimension (positive affect; PA).
+
+-   `MIXTURE_2` represents the careless responding component.
+
+-   `F1 = 1-9`: Indicators 1 to 9 are related to factor one in at least one of the mixtures. Although only the first 6 items should have loadings on the first factor in the attentive mixture, mirt requires to specify the range of 1 to 9 because this is needed for the careless responding component. However, the loadings are set to 0 for items 7 to 9 via constraints in the attentive component.
+
+-   `F2 = 7-9`: Indicators 7 to 9 are related to factor two in at least one of the components.
+
+-   `COV = F1*F2`: The covariance between the two factors is estimated in at least one of the components.
+
+-   `START [MIXTURE_1]`: Specifying starting values is necessary to fix the parameters to these starting values further below.
+
+    -   `(7-9, a1, 0.001)`: Loadings of items 7-9 have starting values of (essentially) 0 to incorporate the assumption that they are unrelated to the first dimension.
+
+-   `START [MIXTURE_2]`: Specifying starting values is necessary to fix the parameters to these starting values further below.
+
+    -   `(1-9, a1, 1)`: Loadings of items 1-9 have starting values of 1 on the first dimension.
+
+    -   `(7-9, a2, 0.001)`: Loadings of items 7-9 have starting values of (essentially) 0 to incorporate the assumption that they are unrelated to the second dimension.
+
+    -   `(GROUP, COV_21, 0.001)`: Covariation between dimensions has starting value of essentially zero.
+
+    -   `(GROUP, COV_22, 0.001)`: Variance of the second dimension has starting value of essentially zero.
+
+-   `FIXED [MIXTURE_1]`: Here we can fix parameters to their starting values specified above.
+
+    -   `(7-9, a1)`: Loadings of items 7-9 are fixed to be unrelated to the first dimension.
+
+-   `FIXED [MIXTURE_2]`: Here we can fix parameters to their starting values specified above.
+
+    -   `(1-9, a1)`: Loadings of items 1-9 are fixed (to 1) on the first dimension.
+
+    -   `(7-9, a2)`: Loadings of items 7-9 are fixed to be unrelated to the second dimension.
+
+    -   `(GROUP, COV_21)`: Covariation between dimensions is fixed to be essentially zero.
+
+    -   `(GROUP, COV_22)`: Variance of the second dimension is fixed to be essentially zero.
+
+-   `CONSTRAIN [MIXTURE_2]`: Here we determine parameter constraints.
+
+    -   `(1-9, d1),(1-9, d2),(1-9, d3),(1-9, d4),(1-9, d5),(1-9, d6)`: thresholds (d1 to d6) are fixed fixed to be equal across items.
+
+-   `FREE [MIXTURE_2]`: Here we determine parameters that should be estimated that would otherwise be fixed.
+
+    -   `(GROUP, COV_11)`: Variance of the first dimension of the careless responding component is freely estimated.
+
+What we aim to achieve is the structure below, where `_` indicates freely estimated values, numbers (`1` and `0.001` in our case) represent fixed values, and `value1` to `value6` denote freely estimated values that are, however, constrained to equality across items. In `mirt`, parameters can only be fixed to start values, which is why first the fixed values have to be specified under `START` and then fixed to these values under `FIXED`.
+
+```{r clarification, echo = FALSE}
+mixture_clarification_attentive <- tribble(
+  ~emotion,       ~dimension1, ~dimension2, ~threshold1,  ~threshold2,  ~threshold3,  ~threshold4,  ~threshold5,  ~threshold6,
+  "sad_d",         "_",   "0.001", "_", "_", "_", "_", "_", "_",
+  "stressed_d",    "_",   "0.001", "_", "_", "_", "_", "_", "_",
+  "overwhelm_d",   "_",   "0.001", "_", "_", "_", "_", "_", "_",
+  "nervous_d",     "_",   "0.001", "_", "_", "_", "_", "_", "_",
+  "ruminate_d",    "_",   "0.001", "_", "_", "_", "_", "_", "_",
+  "irritable_d",   "_",   "0.001", "_", "_", "_", "_", "_", "_",
+  "cheerful_d",    "0.001",   "_", "_", "_", "_", "_", "_", "_",
+  "motivated_d",   "0.001",   "_", "_", "_", "_", "_", "_", "_",
+  "relaxed_d",     "0.001",   "_", "_", "_", "_", "_", "_", "_"
+)      
+
+mixture_clarification_careless <- tribble(
+  ~emotion,       ~dimension1, ~dimension2, ~threshold1,  ~threshold2,  ~threshold3,  ~threshold4,  ~threshold5,  ~threshold6,
+  "sad_d",         1,   0.001, "value1", "value2", "value3", "value4", "value5", "value6",
+  "stressed_d",    1,   0.001, "value1", "value2", "value3", "value4", "value5", "value6",
+  "overwhelm_d",   1,   0.001, "value1", "value2", "value3", "value4", "value5", "value6",
+  "nervous_d",     1,   0.001, "value1", "value2", "value3", "value4", "value5", "value6",
+  "ruminate_d",    1,   0.001, "value1", "value2", "value3", "value4", "value5", "value6",
+  "irritable_d",   1,   0.001, "value1", "value2", "value3", "value4", "value5", "value6",
+  "cheerful_d",    1,   0.001, "value1", "value2", "value3", "value4", "value5", "value6",
+  "motivated_d",   1,   0.001, "value1", "value2", "value3", "value4", "value5", "value6",
+  "relaxed_d",     1,   0.001, "value1", "value2", "value3", "value4", "value5", "value6"
+)
+
+mixture_clarification_attentive %>%
+  kable(digits = 3, caption = "Attentive", booktabs = TRUE) %>%
+  kable_styling(latex_options = c("striped", "hold_position", "scale_down"), 
+                font_size = 7.5)
+
+# Table: Careless
+mixture_clarification_careless %>%
+  kable(digits = 3, caption = "Careless", booktabs = TRUE) %>%
+  kable_styling(latex_options = c("striped", "hold_position", "scale_down"), 
+                font_size = 7.5)
+```
+
+We perform the analysis 20 times per model with 20 different random starting values. This helps reduce the risk for the model to converge to a local maximum. Note that there is no specific recommendation for the number of starting values to use in in `mirt` However, if the likelihood values vary substantially across replications, it may be advisable to increase the number of replications. Due to the random starting values, we first set a seed to ensure the results can be replicated. Additionally, we define an empty results list (`results` in the code) and log-likelihood vector (`loglik` in the code) in which we store the results and log-likelihood values for the 20 analyses. We can extract the results for the solution with the best log-likelihood to continue with those and also determine how stable the results are by looking at the range of the log-likelihood values.
+
+```{r step 1, eval = FALSE}
+set.seed(1611)
+
+results <- list()
+loglik <- c()
+
+for(i in 1:20){
+  results[[i]] <- mirt::multipleGroup(data = data[,indicators], 
+                                    model = model_twodim, 
+                                    dentype = 'mixture-2', 
+                                    GenRandomPars = TRUE, 
+                                    optimizer = 'nlminb', 
+                                    accelerate ='none')
+  
+  loglik[i] <- results[[i]]@Fit$logLik
+}
+
+results_best <- results[[which.max(loglik)]]
+```
+
+The arguments are the following:
+
+-   `data = data[,indicators]`: The data as specified here is used as input.
+
+-   `model = model_twodim`: The model as specified above is estimated.
+
+-   `dentype = 'mixture-2'`: The model with two mixture components is estimated.
+
+-   `GenRandomPars = TRUE`: Random initial parameter values are used.
+
+-   `optimizer = 'nlminb'`: An efficient estimator is specified for the model estimation.
+
+-   `accelerate ='none'`: No acceleration methods for the optimization process are used.
+
+Note that the last two arguments (about the optimization) were proposed by Uglanova et al. (2025) and should work well. If problems are encountered, one might consult the \`mirt' helpfile on optimization tweeks.
+
+We save the results with the following syntax:
+
+```{r, eval = FALSE}
+save(results, file = "results.RData")
+save(loglik, file = "loglik.RData")
+save(results_best, file = "results_best.RData")
+```
+
+```{r , include = FALSE}
+# not visible in quarto output; used to load the results without re-estimating them
+load("results_best.RData")
+load("loglik.RData")
+```
+
+We first check how variable the log-likelihood values are.
+
+```{r loglik}
+loglik <- round(loglik)
+table(loglik)
+```
+
+Although there are no formal guidelines defining stability, we conclude that the results are relatively stable and sufficient to proceed, as the best likelihood was identified in half of the cases. We would have increased the number of random starting values if it appeared only once or twice. Next, we extract the estimated parameters for the two states.
+
+```{r coefficients}
+coefficients <- mirt::coef(results_best, simplify = TRUE)
+```
+
+### Optional Part
+
+[Our primary interest lies in the state sizes. However, it is important to note that these estimates may shift slightly after incorporating the transition model in Step 3, as the model then receives additional information about the likelihood of being in a particular state. The estimated state proportions from the mixture model for the attentive and careless state, respectively, are:]{style="color:green"}
+
+```{r state proportions}
+cat(" - attentive:", 
+    round(unlist(coefficients$MIXTURE_1$class_proportion), 2), "\n")
+cat(" - careless:", 
+    round(unlist(coefficients$MIXTURE_2$class_proportion), 2), "\n")
+```
+
+[One may furthermore inspect the output out of interest or at least to verify that the model was implemented correctly. We begin with the first state.]{style="color:green"}
+
+```{r attentive results}
+round(coefficients$MIXTURE_1$items,2)
+round(coefficients$MIXTURE_1$cov,2)
+```
+
+[In the first state (`$Mixture_1`), the attentive state, we can indeed see that the first six items have loadings (`a1` values) different from 0 for the first dimension and the last three items have loadings (`a2` values) different from 0 for the second dimension The correlations between the two dimensions (`F1` and `F2`) is negative. The thresholds differ across items. If desired, one could proceed and plot these thresholds with item characteristic curves (ICC). We provide an example for the item `cheerful` here.]{style="color:green"}
+
+```{r ICC attentive}
+# generate theta (latent trait) values for theta2
+theta <- seq(-4, 4, length.out = 500)
+
+# extract cheerful_d params (assuming it's the 7th row)
+a2 <- coefficients$MIXTURE_1$items[7, "a2"]
+d <- as.numeric(coefficients$MIXTURE_1$items[7, 3:8])  # d1 to d6
+
+# compute cumulative probabilities using GRM logic
+eta <- outer(theta, d, function(th, dj) a2 * th + dj)
+P_cum <- 1 / (1 + exp(-eta)) # cumulative probabilities
+P_cum <- cbind(1, P_cum, 0)  # add top (P0=1) and bottom (P7=0)
+
+# compute category probabilities as differences between cumulative probs
+P_cat <- P_cum[, -ncol(P_cum)] - P_cum[, -1]                  
+
+# adjust plot margins to make space for the legend
+par(mar = c(5, 4, 4, 12), xpd = TRUE)
+
+# plot category curves
+matplot(theta, P_cat, type = "l", lty = 1, lwd = 2,
+        col = viridis(7), ylab = "Probability", xlab = expression(theta[2]),
+        main = "ICC for cheerful")
+
+legend("topright", inset = c(-0.4, 0), legend = paste("Category", 1:7), 
+       col = viridis(7), lty = 1, lwd = 2)
+
+```
+
+[What becomes apparent is that the item functions as intended: as the score on the latent variable PA increases, higher item responses become increasingly likely. We continue with the second state.]{style="color:green"}
+
+```{r careless results}
+round(coefficients$MIXTURE_2$items,2)
+round(coefficients$MIXTURE_2$cov,2)
+```
+
+[For the careless state (`$Mixture_2`), loadings are indeed all 1 and 0 for the first and second dimensions, respectively. The thresholds are the same across items. As only a single dimension is specified, the correlation between dimensions is zero. We can again inspect the ICCs. Since all parameters are identical across items, a single curve represents the response pattern. This curve can offer insights into the most prominent type of careless responding.]{style="color:green"}
+
+```{r ICC careless}
+# generate theta (latent construct) values for the second (PA) dimension
+theta <- seq(-4, 4, length.out = 500)
+
+# select parameters of any item (here item 7); 
+# the choice is arbitrary because all items have the same parameters
+a2 <- coefficients$MIXTURE_2$items[7, "a1"]
+d <- as.numeric(coefficients$MIXTURE_2$items[7, 3:8])  # d1 to d6
+
+# compute cumulative probabilities using GRM logic
+eta <- outer(theta, d, function(th, dj) a2 * th + dj)
+P_cum <- 1 / (1 + exp(-eta)) # cumulative probabilities
+P_cum <- cbind(1, P_cum, 0)  # add top (P0=1) and bottom (P7=0)
+
+# compute category probabilities as differences between cumulative probs
+P_cat <- P_cum[, -ncol(P_cum)] - P_cum[, -1]                  
+
+# adjust plot margins to make space for the legend
+par(mar = c(5, 4, 4, 12), xpd = TRUE)
+
+# plot category curves
+matplot(theta, P_cat, type = "l", lty = 1, lwd = 2,
+        col = viridis(7), ylab = "Probability", xlab = expression(theta[2]),
+        main = "ICC for any item")
+
+legend("topright", inset = c(-0.4, 0), legend = paste("Category", 1:7), 
+       col = viridis(7), lty = 1, lwd = 2)
+```
+
+[The curve suggests a tendency toward the extreme categories, with the two ends of the scale being chosen most likely.]{style="color:green"}
+
+## Step 2
+
+### Necessary Part
+
+In this step, we assign the observations to the two components using modal assignment (i.e., assigning observations to the state with the highest posterior probabilities) and we compute the inherent classification error. We do this manually without using any package. First, for every observation, we retrieve the posterior probabilities to belong to the two states:
+
+```{r posteriors, eval = FALSE}
+posterior_data <- mirt::fscores(results_best, method = 'classify')
+```
+
+```{r, include = FALSE, eval = FALSE}
+# not visible in quarto output; manually applied once
+save(posterior_data, file = "posterior_data.RData")
+```
+
+```{r, include = FALSE}
+# not visible in quarto output; used to load the results without re-estimating them
+load(file = "posterior_data.RData")
+```
+
+Based on the probabilities, we determine to which state an observation most likely belongs and store this together with the posterior probabilities in one object.
+
+```{r modal}
+modal_data <- max.col(posterior_data)
+classification_posteriors <- cbind.data.frame(modal_data, posterior_data)
+colnames(classification_posteriors) <- c("Modal", paste("State",1:2,sep=""))
+head(classification_posteriors)
+```
+
+We continue with the computation of the classification error probabilities.
+
+```{r errors}
+modal_classification_table <- matrix(NA,ncol = 2, nrow = 2)
+for(i in 1:2){
+  for(j in 1:2){
+    modal_classification_table[j,i] <- 
+      sum((classification_posteriors[classification_posteriors$Modal==i,j+1]))
+  }
+}
+classification_errors_prob <- 
+  modal_classification_table/rowSums(modal_classification_table)
+```
+
+### Optional Part
+
+[The classification errors are primarily relevant for Step 3, but they also offer insights into the uncertainty with which observations are classified into the states. If the off-diagonal values are non-zero, it indicates the presence of classification uncertainty and, consequently, error.]{style="color:green"}
+
+```{r errors check}
+round(classification_errors_prob, 2)
+```
+
+[We observe that classification error, and thus uncertainty, is present. The transition model accounts for this when estimating the probabilities of transitioning between states. Next, we check how the state proportions change with the modal state assignment.]{style="color:green"} After modal assignment, the estimated state proportions for the attentive and careless state, respectively, are:
+
+```{r state proportions modal}
+state_proportions <- table(classification_posteriors[,1])/nrow(data)
+
+cat(" - attentive:", round(state_proportions[1], 2), "\n")
+cat(" - careless:", round(state_proportions[2], 2), "\n")
+```
+
+[We conclude that the state proportions are still the same.]{style="color:green"}
+
+Finally, we add the posterior probabilities and modal assignments to the dataset.
+
+```{r step 2 add results}
+data <- cbind.data.frame(data, classification_posteriors)
+```
+
+## Step 3
+
+### Necessary Part
+
+In the final step, we study how individuals transitions between the attentive and careless responding states. To this end, we obtain transition probabilities, which help us understand the overall stability of state memberships across participation. To ensure accurate parameters, this step accounts for the classification errors computed in Step 2. As mentioned before, it is possible for the modal state assignments to slightly change in this step due to the additional information about the dependencies of state membership over time. However, this is unlikely for observations that were assigned to the states with high certainty (i.e., with probabilities close to or equal to 1).
+
+Before the analysis, we have to add a column `delta_time` with the interval lengths between consecutive observations. If no such column is specified in the `step3()` function below, all intervals are treated as having the same length, which falsifies the estimation of transition probabilities, since transitioning is naturally less likely for shorter intervals than for longer ones. We also need to add a column `scalar_id` with scalar (i.e., purely numeric) identification values, because the `step3()` function does not work if the identification column contains characters as is the case with the `external_id` column in our data, which contains entries like s776748739.
+
+```{r step 3 preparation}
+data <- data[!is.na(data$record_time),]
+data <- data %>% 
+  group_by(external_id) %>% 
+  mutate(delta_time = as.numeric(difftime(record_time, lag(record_time), 
+                                          units = "secs")) / 3600)
+data$delta_time <- round(data$delta_time,1)
+
+id_mapping <- setNames(seq_along(unique(data$external_id)), 
+                       unique(data$external_id))
+data <- data %>%
+  mutate(scalar_id = id_mapping[as.character(external_id)])
+```
+
+Furthermore, we have to add the total number of completed questionnaires per person, because the transition model leads to errors if an individual has only a single measurement. We keep individuals with at least 2 measurement occasions and check how many and which individuals were removed this way.
+
+```{r step 3 preparation 2}
+data <- data %>%
+  group_by(external_id) %>%
+  mutate(count_rows = n()) %>%
+  ungroup()
+
+filtered_data <- data %>%
+  filter(count_rows > 1)
+
+removed_individuals <- data %>%
+  distinct(external_id) %>%
+  filter(!external_id %in% filtered_data$external_id)
+
+cat("Number of individuals removed:", nrow(removed_individuals), "\n")
+cat("Removed external_id numbers:", 
+    paste(removed_individuals$external_id, collapse = ", "), "\n")
+```
+
+Because the estimation depends on random starting values, we start by setting a seed.
+
+```{r step 3, eval = FALSE}
+set.seed(1990)
+transitionmodel  <- step3(data = filtered_data, 
+                          identifier = "scalar_id", 
+                          n_state = 2,
+                          postprobs = filtered_data[,c("State1","State2")],
+                          timeintervals = "delta_time")
+```
+
+The only arguments that have to be specified for the actual analysis are the following:
+
+-   `data = filtered_data`: Provide the data.
+-   `identifier = "external_id"`: Specify the column name of the subject identifier.
+-   `n_state = 2`: Specify that we have two states, one attentive and one careless responding state.
+-   `postprobs = filtered_data[,c("State1","State2")]`: Provide the posterior probabilities from the previous steps.
+-   `timeintervals = "delta_time"`: Specify the column name of the interval length between measurement occasions.
+
+```{r, include = FALSE, eval = FALSE}
+# not visible in quarto output; manually applied once
+save(transitionmodel, file = "resultsTransition.RData")
+```
+
+```{r , include = FALSE}
+# not visible in quarto output; used to load the results without re-estimating them
+load(file = "resultsTransition.RData")
+```
+
+We start by retrieving the data with the final assignments to the attentive and careless states. [**These posterior probabilities and modal assignments should be used for any follow-up analyses, for example when deciding to exclude careless observations!**]{style="color:blue"}
+
+```{r final assignments}
+data_final_assignments <- transitionmodel$data
+data_final_assignments <- data_final_assignments[,c("external_id", 
+                                                    "counter", 
+                                                    "scalar_id",
+                                                    "Modal", 
+                                                    "State1", 
+                                                    "State2")]
+```
+
+```{r, save data with assignments, eval = FALSE, include = FALSE}
+data <- data_final_assignments[,c("external_id", "counter", "Modal", "State1", "State2")]
+colnames(data) <- c("external_id", "counter", "mixtureIRT", "mixtureIRT_posteriors_state1", "mixtureIRT_posteriors_state2" )
+saveRDS(data, file = "data_mixtureIRT.RDS")
+```
+
+We again check the state proportions and if they have changed. [**These proportions are the ones that should be reported!**]{style="color:blue"}
+
+```{r state proportions modal updated}
+state_proportions <- table(data_final_assignments[,"Modal"])/
+  nrow(data_final_assignments)
+
+cat(" - attentive:", round(state_proportions[1], 2), "\n")
+cat(" - careless:", round(state_proportions[2], 2), "\n")
+```
+
+The overall state proportions have thus not changed.
+
+### Optional Part
+
+[We can now obtain the initial state probabilities, which indicate how likely it is for an individual to start in a given state, as well as the transition probabilities over a one-unit interval (i.e., one hour), reflecting the probability of transitioning between states (versus staying in the same state) across two consecutive measurement occasions.]{style="color:green"}
+
+```{r step 3 results}
+probabilities(transitionmodel)
+```
+
+[We conclude that most individuals begin in the attentive state, with a probability of 0.97, and that transitions between states are rare—estimated at 1.00 for remaining in the attentive state and 0.97 for remaining in the careless state. It is important to note, however, that these are probabilities and do not imply that none of the individuals ever transition from the attentive to the careless state.]{style="color:green"}
+
+[Next, we investigate the proportion of careless responding memberships for individuals who have been in that state at least once.]{style="color:green"}
+
+```{r step 3 results assignments}
+result <- data_final_assignments %>%
+  group_by(scalar_id) %>%
+  summarise(
+    has_state_2 = any(Modal == 2),
+    proportion_state_2 = mean(Modal == 2)
+  ) %>%
+  ungroup()
+
+filtered_result <- result %>% filter(has_state_2 == TRUE)
+
+hist(unlist(filtered_result[,"proportion_state_2"]), 
+     xlab = "Proportion", 
+     main = "", 
+     col = viridis(4)[2])
+
+cat("For individuals that were in the careless state at least once, 
+    how many were in there for less than 10 percent of the time?:", 
+    round(sum(filtered_result$proportion_state_2<0.10)/
+          nrow(filtered_result),2), "\n")
+
+```
+
+[Let us also examine how many individuals participated in the study and were included in the Step 3 analysis, as well as the proportion of individuals who entered the careless responding state at least once.]{style="color:green"}
+
+```{r step 3 unique individuals}
+unique_ids_count <- data_final_assignments %>%
+  summarise(unique_ids = n_distinct(scalar_id))
+cat("Individuals in the study:", unique_ids_count[,], "\n")
+cat("Proportion of individuals that are in the careless responding state 
+    at least once:", round(nrow(filtered_result)/unique_ids_count[,],2), "\n")
+
+```
+
+[Finally, one could generate transition plots per person to see how they transition between attentive and careless responding over time. We provide an example for the first four persons.]{style="color:green"}
+
+```{r step 3 transition plots}
+layout(matrix(c(1,3,2,4), nrow = 2, ncol = 2))
+for(i in 1:4) plot(transitionmodel, identifier = "scalar_id", id = i)
+```

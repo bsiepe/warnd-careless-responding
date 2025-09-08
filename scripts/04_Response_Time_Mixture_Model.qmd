@@ -1,0 +1,145 @@
+---
+title: "Online Supplement 4: Response Time Mixture Model"
+subtitle: "For the Manuscript: Identifying Careless Responding in Ecological Momentary Assessment: Inconsistent Signals from Different Detection Methods in the WARN-D Data"
+
+author: 
+ - name: Esther Ulitzsch
+   orcid: 0000-0002-9267-8542
+   affiliations: Centre for Educational Measurement, University of Oslo; Centre for Research on Equality in Education, University of Oslo
+ - name: Gudrun Eisele
+   orcid: 0000-0002-4466-3733
+   affiliations: KU Leuven
+ - name: Leonie V.D.E. Vogelsmeier
+   orcid: 0000-0002-1666-7112
+   affiliations: Tilburg University
+
+date: "`r Sys.Date()`"
+format:
+  html:
+    toc: true
+    number-sections: true
+    theme: cosmo
+    code-fold: true
+    code-tools: true
+    code-summary: "Show the code"
+    fig-width: 7
+    fig-height: 4.5
+    fig-align: "center"
+    embed-resources: true
+execute:
+  message: false
+  warning: false
+  eval: true # run code?
+---
+
+# Background
+
+In this script, we aimed to investigate careless responding using a timing-based mixture model. The model makes use of the time spent on a targeted segment of the EMA, which can either be the full survey or, in cases where the assessment involves branching or administering different items at different times of day, a specific block of items at each measurement occasion. The model distinguishes between unobserved response states (attentive versus careless) by assuming different data-generating processes for the time spent on the targeted segment. For attentive responses, time is assumed to be influenced by (a) a person-specific parameter that reflects the initial time a respondent requires when first encountering the items and (b) a person-specific parameter governing the speed-up due to habituation and practice, modeled with an exponential decay function. This function captures rapid gains at the beginning while gradually tapering off, with a lower bound to prevent unrealistically short times. Whether a person is attentive at a given measurement occasion is modeled using an IRT framework, where attentiveness is a function of the individual’s overall attentiveness and the occasion-specific difficulty of being attentive. These difficulties are allowed to vary linearly both within and across days. The method was proposed and evaluated in Ulitzsch, Nestler, et al. (2024). A brief summary of the method is presented in the main manuscript. Bayesian model estimation is conducted using `stan`. For a detailed technical description, please refer to the article in which the model was originally presented.
+
+# Preliminaries
+
+We first install and load all relevant packages. 
+
+```{r packages, warning = FALSE, message = FALSE}
+if(!require(pacman)) install.packages("pacman")
+pacman::p_load("ggplot2", "rstan", "ggh4x")
+```
+
+# Data Preparation
+
+This section outlines all relevant preprocessing steps for your analysis. Note that the data characteristics are outlined in the main manuscript. First, we load the data, retaining only the necessary information for this specific analysis due to its large size.
+
+```{r data-preparation, eval = FALSE}
+# load the complete data
+data <- read.csv(here::here("data","WARND_stage2_c1234_trainingset_before_15min_v2024_07_16.csv"))
+
+# store indicator names for later (indicators 1:7 are NA, 8:10 are PA; we are interested in the associated response times)
+indicators <- c("rt_sad_d", "rt_stressed_d", "rt_overwhelm_d", "rt_nervous_d", "rt_ruminate_d", "rt_irritable_d", "rt_tired_d", "rt_cheerful_d", "rt_motivated_d", "rt_relaxed_d")
+
+# keep data for which we have responses on the PA and NA indicators
+data <- data[complete.cases(data[,indicators]),]
+
+# keep only data that we need
+data <- data[,c("external_id", "record_time", "day_num", "prompt_num" , indicators)]
+```
+
+```{r include = FALSE, eval = FALSE}
+# not visible in quarto output; manually applied once
+save(data, file = "data.RData")
+```
+
+```{r include = FALSE}
+# not visible in quarto output; used to load the data without preprocessing them again
+load("data.RData")
+indicators <- c("rt_sad_d", "rt_stressed_d", "rt_overwhelm_d", "rt_nervous_d", "rt_ruminate_d", "rt_irritable_d", "rt_tired_d", "rt_cheerful_d", "rt_motivated_d", "rt_relaxed_d")
+```
+
+For the analysis, for each observation, we need (a) log total time spent on the 10 target items, (b) number of days passed since start of the EMA, (c) number of prompts received since the start of the day, and (d) number of prompts responded to since the start of the EMA.
+
+```{r pre-process data}
+# (a) log total time spent on the 10 target items
+data$first_response <- as.POSIXlt(apply(data[,indicators],1,min))
+data$last_response <- as.POSIXlt(apply(data[,indicators],1,max))
+data$log_total_time <- log(as.numeric(data$last_response-data$first_response)/60) # in minutes
+
+# (b) number of days passed since start of the EMA -> in the data set (day_num)
+# (c) number of prompts received since the start of the day -> in the data set (prompt_num)
+
+# (d) number of prompts responded to since the start of the EMA
+data <- data[order(data$external_id, data$day_num, data$prompt_num), ] # make sure that data are in the correct order
+data$obs_id <- as.numeric(ave(data$external_id, data$external_id, FUN = seq_along)) # create obs_id within each subject
+
+```
+
+# Descriptives
+
+Next, we examine how log-transformed time spent on the 10 target items evolved over the course of the EMA. Inspecting the average trajectory, we observe an initial speed-up during the first week, which then levels off, likely reflecting the effects of practice and habituation.
+
+```{r plot timing data}
+p <- ggplot(data, aes(x = interaction(prompt_num, day_num),log_total_time))
+p <- p + geom_line(aes(group = external_id), alpha = 0.01) + geom_smooth(aes(group = 1), color = "lightskyblue4", se = FALSE, method = "gam", linewidth = 1) 
+p <- p + theme_minimal() +
+  theme(axis.text.x = element_text(size = 4),axis.text.y = element_text(size = 12))
+p <- p + scale_x_discrete(guide = "axis_nested") + labs(y="Log time", x="")
+p
+
+```
+
+
+# Analysis
+
+We use `stan` for Bayesian model estimation, using the following code.
+
+```{stan, output.var="ex1", code=readLines('screentimeCIER.stan')}
+
+```
+
+We first prepare a data list for `stan`, which includes all variables and constants specified in the data block of the model.
+
+```{r data list}
+dat_list <- list(
+  N  = length(unique(data$external_id)), # number of respondents
+  Nobs  = nrow(data), # number of observations
+  person = as.numeric(as.factor(data$external_id)), # person id
+  obs_id = data$obs_id, # number of prompts responded to since the start of the EMA
+  day_num = data$day_num, # number of days passed since start of the EMA
+  prompt_num = data$prompt_num, # number of prompts received since the start of the day
+  log_total_time = data$log_total_time # log total time on the target segment
+)
+
+```
+
+Next, we can pass the data list to  `stan` and estimate the model.
+
+```{r model estimation, eval=FALSE}
+start <- Sys.time()
+fitCare <- stan(file = 'screentimeCIER.stan',  data = dat_list, iter = 10000, chains = 2, thin = 10) 
+end <- Sys.time()
+end-start
+sumCare <- summary(fitCare)[[1]] 
+
+PSRF <- sumCare[,"Rhat"] # check convergence
+max(PSRF, na.rm = T)
+```
+
+The model did not converge. This can be related to the complexity of the model or characteristics of the data. To explore the specific causes of the non-convergence, we can modify the model or use subsets of the data. However, We also did not achieve convergence in a smaller subset of the data, or by having attentiveness vary within days as a function of time of the day or the number of prompts issued (rather than responded to). This prevents us from drawing conclusions about the cause of non-convergence.
