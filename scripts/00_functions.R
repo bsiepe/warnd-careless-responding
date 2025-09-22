@@ -4,17 +4,6 @@
 
 
 # Standard deviations within-assessment -----------------------------------
-# calc_within_assessment_sd <- function(data,
-#                                  items = ema_items,
-#                                  id_col = user_id,
-#                                  answer_col = answer_id) {
-#   data |>
-#     dplyr::filter(item %in% items) |>
-#     dplyr::group_by({{id_col}}, counter) |>
-#     dplyr::summarise(sd = sd({{answer_col}}, na.rm = TRUE)) |>
-#     dplyr::ungroup()
-# }
-
 calc_within_assessment_sd <- function(data,
                                       items = ema_items,
                                       id_col = user_id) {
@@ -33,19 +22,6 @@ calc_mode <- function(x) {
   unique_x[which.max(tabulate(match(x, unique_x)))]
 }
 
-
-# calc_mode_percentage <- function(data,
-#                             items = ema_items,
-#                             id_col = user_id,
-#                             answer_col = answer_id) {
-#   data |>
-#     dplyr::filter(item %in% items) |>
-#     dplyr::group_by({{id_col}}, counter) |>
-#     dplyr::mutate(mode = calc_mode({{answer_col}})) |>
-#     dplyr::mutate(is_mode = ifelse({{answer_col}} == mode, 1, 0)) |>
-#     dplyr::summarise(mode_pct = mean(is_mode, na.rm = TRUE)) |>
-#     dplyr::ungroup()
-# }
 
 calc_mode_percentage <- function(data,
                                  items = ema_items,
