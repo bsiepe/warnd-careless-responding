@@ -418,7 +418,9 @@ flag_careless <- function(df, cutoffs) {
 }
 
 # compute similarity in each combination of the multiverse
-compute_similarities <- function(flag_list, lpa_res, irt_res) {
+compute_similarities <- function(flag_list, lpa_res, irt_res,
+                                 lpa_attentive_profile = 2,
+                                 irt_attentive_profile = 1) {
   imap(flag_list, function(flag_df, i) {
     cat("Processing iteration", i, "of", length(flag_list), "\n")
     
@@ -428,8 +430,8 @@ compute_similarities <- function(flag_list, lpa_res, irt_res) {
       mutate(across(where(is.logical), ~ as.integer(.))) |>
       # convert to binary
       mutate(
-        flag_lpa = ifelse(LPA_profile != 2, 1, 0),
-        flag_irt = ifelse(mixtureIRT == 1, 0, 1),
+        flag_lpa = ifelse(LPA_profile != lpa_attentive_profile , 1, 0),
+        flag_irt = ifelse(mixtureIRT == irt_attentive_profile, 0, 1),
         flag_sum1 = ifelse(flag_sum == 0, 0, 1),
         flag_sum2 = ifelse(flag_sum < 2, 0, 1)
       ) |>
