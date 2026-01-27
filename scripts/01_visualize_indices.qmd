@@ -99,7 +99,7 @@ df_indices |>
 
 ## Main cutoffs
 
-Above, we defined the main default cutoffs that we use for the paper. We now check how many responses are marked as careless for each of the indices (in percent of all responses). Please note that we obtain slightly different percentages (second decimal difference) to the results in @sec-overview-indices. This difference occurs due to the way in which missing values are recorded. Here, we calculate them based on the within-assessment SD - below, we calculate them based on the missings for each individual careless response flag. For the overview in the manuscript, we keep it as it is here. 
+We have already defined the main default cutoffs that we use for the paper. We now check how many responses are marked as careless for each of the indices (in percent of all responses). Please note that we obtain slightly different percentages (second decimal difference) to the results in @sec-overview-indices. This difference occurs due to the way in which missing values are recorded. Here, we calculate them based on the within-assessment SD - below, we calculate them based on the missings for each individual careless response flag. For the overview in the manuscript, we keep it as it is here. 
 ```{r}
 flag_df <- readRDS(here::here("output", "flag_df.RDS"))
 
@@ -498,7 +498,7 @@ for(model in models) {
 
 # Similarity Indices and Models
 
-We attach the model results to the indices. We classify everyone with an LPA profile 1 or 2, and a mixture IRT class 1 as attentive. 
+We attach the model results to the indices. We classify everyone with an LPA profile 2, and a mixture IRT class 1 as attentive. 
 ```{r}
 #| label: attach-model
 df_indices_models <- lpa_res |> 
