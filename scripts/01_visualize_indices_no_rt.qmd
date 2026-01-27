@@ -1,0 +1,173 @@
+---
+title: "Online Supplement 1: Visualizing Indices"
+subtitle: "For the Manuscript: Identifying Careless Responding in Ecological Momentary Assessment: Inconsistent Signals from Different Detection Methods in the WARN-D Data"
+author: 
+ - name: Björn S. Siepe
+   orcid: 0000-0002-9558-4648
+   affiliations: University of Marburg
+date: "`r Sys.Date()`"
+format:
+  html:
+    toc: true
+    number-sections: true
+    theme: cosmo
+    code-fold: true
+    code-tools: true
+    code-summary: "Show the code"
+    fig-width: 8
+    fig-height: 5
+    fig-align: "center"
+    embed-resources: true
+execute:
+  message: false
+  warning: false
+  eval: true # run code?
+params:
+  rerun: false  # define parameter if all large analyses should be rerun
+---
+
+# Background
+
+In this document, we visualize and analyze all indices that were computed in `01_calculate_indices.qmd` *without* the reaction time (RT) indices.
+
+We first load all relevant packages: 
+```{r packages}
+if(!require(pacman))
+  install.packages("pacman")
+pacman::p_load(
+  "here",
+  "ggplot2",
+  "rrcov",
+  "Hmisc",
+  "sysfonts",
+  "showtext",
+  "ggh4x",
+  "cowplot",
+  "gtsummary",
+  "gt",
+  "future",
+  "furrr",
+  "dplyr",
+  "tidyr",
+  "vegan",
+  "tibble",
+  "purrr",
+  "flextable",
+  "patchwork"
+)
+
+source(here("scripts", "00_functions.R"))
+
+# use color based on the Johnson palette from MetBrewer
+fill_color <- "#132b69"
+
+set.seed(35032)  
+```
+
+
+Relevant EMA items and their reaction times: 
+```{r ema-itemss}
+ema_items <-  c("sad_d", "stressed_d", "overwhelm_d", "nervous_d", "ruminate_d", "irritable_d", "cheerful_d", "motivated_d", "relaxed_d")
+rt_ema_items <- paste0("rt_", ema_items)
+```
+
+
+For later visualizations, we also load the results of different model-based approaches. Here, we use the LPA without RT indices and the mixture IRT model:
+```{r load-models}
+lpa_res_no_rt <- readRDS(here::here("output", "data_profiles_without_time_indices.RDS"))
+irt_res <- readRDS(here::here("output", "data_mixtureIRT.RDS"))
+```
+
+We load other results of the indices:
+```{r}
+#| label: load-flags
+flag_df_no_rt <- readRDS(here::here("output", "flag_df_no_rt.RDS"))
+
+```
+
+
+
+
+### Multiverse Similarity
+Instead of checking the correlation between affect items, we can instead check the overlap between carelessness flags based on the indices and the model-based indices across the multiverse. To do so, we use similarity metrics.
+
+Visualize the results for both models and the single and double hurdle approach: 
+```{r}
+#| label: multiverse-similarity-plots
+df_jaccard_spec_no_rt <- readRDS(here::here("output", "df_jaccard_spec_no_rt.RDS"))
+hurdles <- c("single", "double")
+models <- c("lpa", "irt")
+type <- "similarity"
+
+# plots for similarities
+for(model in models) {
+  for(hurdle in hurdles) {
+    sim_plot <- plot_similarity(df_jaccard_spec_no_rt , model, hurdle = hurdle)
+    spec_plot <- plot_specification(df_jaccard_spec_no_rt , type = "similarity", model = model, hurdle = hurdle)
+    
+    mv_plot <- plot_grid(
+      sim_plot,
+      spec_plot,
+      ncol = 1,
+      rel_heights = c(1, 2),
+      align = "h",
+      axis = "b"
+    )
+    
+    ggsave(
+      paste0("mv_plot_similarity_no_rt", model, "_", hurdle, ".pdf"),
+      mv_plot,
+      device = "pdf",
+      path = here::here("figures"),
+      height = 10,
+      width = 10
+    )
+  }
+}
+```
+
+
+
+We can also check the highest similarity indices to the LPA across all specifications:
+```{r}
+#| label: multiverse-similarity-highest
+
+df_jaccard_spec_no_rt |> 
+  arrange(desc(jaccard_similarity1_lpa)) |> 
+  head(10)
+```
+
+
+
+# Similarity Indices and Models
+
+We attach the model results to the indices. We classify everyone with an LPA profile 1, and a mixture IRT class 1 as attentive. 
+```{r}
+#| label: attach-model
+df_indices_models <- lpa_res_no_rt |> 
+  left_join(irt_res, by = c("external_id", "counter")) |> 
+  left_join(flag_df_no_rt, by = c("external_id", "counter")) |> 
+    mutate(across(where(is.logical), ~ as.integer(.))) |> 
+    mutate(flag_lpa = ifelse(LPA_profile != 1, 1, 0),
+           flag_irt = ifelse(mixtureIRT == 1, 0, 1)) |> 
+   select(contains("flag")) |> 
+  # recode to obtain single hurdle and multiple hurdle approach
+  mutate(
+    single_hurdle = if_else(flag_sum == 0, 0, 1),
+    double_hurdle = if_else(flag_sum < 2, 0, 1)
+  ) |> 
+  # then remove raw sum
+  select(!flag_sum)
+  
+```
+
+
+
+
+# Session Info
+
+```{r session-info}
+pander::pander(sessionInfo())
+
+```
+
