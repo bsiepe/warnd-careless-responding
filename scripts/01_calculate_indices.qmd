@@ -476,6 +476,165 @@ saveRDS(df_jaccard_spec, file = here::here("output", "df_jaccard_spec.RDS"))
 ```
 
 
+We then see which specifications lead to the highest similarities between indices and model-based classifications:
+```{r}
+#| eval: !expr params$rerun
+#| label: multiverse-similarity
+
+df_jaccard_spec <- readRDS(here::here("output", "df_jaccard_spec.RDS"))
+
+df_jaccard_spec |> 
+  arrange(desc(jaccard_similarity1_lpa)) |> 
+  head(10)
+```
+
+
+
+#### Revision: Checking Similarity without Response Time Indices
+
+For the first revision of the manuscript, we additionally removed the response time indices from the index flagging and the LPA. We recompute the similarities to see if they differ compared to the original analysis containing the response times. 
+
+```{r}
+#| eval: !expr params$rerun
+# make the careless results list smaller and easier to work with
+careless_results_list <- readRDS(here::here("output", "careless_results_list.RDS"))
+
+careless_list <- lapply(careless_results_list, function(x){
+    x |> 
+    dplyr::select(external_id, counter, starts_with("flag"))
+})
+
+rm(careless_results_list)
+
+# compute careless responding flags WITHOUT response time indices
+flag_list_no_rt <- lapply(careless_list, function(x) {
+  x |>
+    rowwise() |>
+    dplyr::mutate(
+      flag_sum = sum(
+        flag_sd_within,
+        # flag_average_response_time,
+        # flag_sd_response_time,
+        flag_longstring,
+        flag_mode,
+        flag_anto,
+        na.rm = TRUE
+      )
+    ) |>
+    dplyr::select(external_id, counter, flag_sum)
+})
+
+# remove unnecessary data attributes
+flag_list_no_rt <- lapply(flag_list_no_rt, function(x){
+  attr(x, "groups") <- NULL
+  x <- ungroup(x)
+  x
+})
+saveRDS(flag_list_no_rt, file = here::here("output", "flag_list_no_rt.RDS"))
+
+```
+
+Also compute main and lenient specifications without response time indices:
+```{r}
+#| eval: !expr params$rerun
+#| label: multiple-hurdles-no-rt
+
+# select df of main specification
+careless_results_list <- readRDS(here::here("output", "careless_results_list.RDS"))
+
+main_id <- specification_grid |>
+  mutate(id = row_number()) |> 
+  filter(
+    sd_within_cutoff == 1.25 &
+      average_response_time_cutoff == 2 &
+      sd_response_time_cutoff == 1 &
+      longstring_cutoff == 7 & mode_cutoff == 5
+  ) |> 
+    pull(id)
+
+
+main_df <- careless_results_list[[main_id]]
+
+# apply multiple hurdle approach
+flag_df_no_rt <- main_df |>
+  dplyr::select(external_id, counter, starts_with("flag")) |>
+  rowwise() |>
+  mutate(
+    flag_sum = sum(
+      flag_sd_within,
+      # flag_average_response_time,
+      # flag_sd_response_time,
+      flag_longstring,
+      flag_mode,
+      flag_anto,
+      na.rm = TRUE
+    )
+  ) 
+
+saveRDS(flag_df_no_rt, file = here::here("output", "flag_df_no_rt.RDS"))
+
+
+# Lenient 
+lenient_id <- specification_grid |>
+  mutate(id = row_number()) |> 
+  filter(
+    sd_within_cutoff == 0.75 &
+      average_response_time_cutoff == 1 &
+      sd_response_time_cutoff == 0.4 &
+      longstring_cutoff == 8 & mode_cutoff == 6
+  ) |> 
+    pull(id)
+
+
+lenient_df <- careless_results_list[[lenient_id]]
+
+# apply multiple hurdle approach
+lenient_flag_df_no_rt <- lenient_df |>
+  dplyr::select(external_id, counter, starts_with("flag")) |>
+  rowwise() |>
+  mutate(
+    flag_sum = sum(
+      flag_sd_within,
+      # flag_average_response_time,
+      # flag_sd_response_time,
+      flag_longstring,
+      flag_mode,
+      flag_anto,
+      na.rm = TRUE
+    )
+  ) 
+
+
+saveRDS(lenient_flag_df_no_rt, file = here::here("output", "lenient_flag_df_no_rt.RDS"))
+```
+
+
+
+We can then check the similarities again, while also using the LPA results without RTs. Importantly, in the revision, the first profile of the LPA is the attentive one, whereas it was the second one in the original analysis. 
+
+```{r}
+#| eval: !expr params$rerun
+#| label: similarity-no-rt
+
+flag_list_no_rt <- readRDS(here::here("output", "flag_list_no_rt.RDS"))
+lpa_res_no_rt <- readRDS(here::here("output", "data_profiles_without_time_indices.RDS"))
+
+# apply custom function
+jaccard_results_no_rt <- compute_similarities(flag_list_no_rt, lpa_res_no_rt, irt_res,
+                                              lpa_attentive_profile = 1)
+
+# format properly and add specification info
+df_jaccard_no_rt <- bind_rows(jaccard_results_no_rt)
+df_jaccard_spec_no_rt <- cbind(df_jaccard_no_rt, specification_grid)
+
+
+saveRDS(df_jaccard_spec_no_rt, file = here::here("output", "df_jaccard_spec_no_rt.RDS"))
+
+```
+
+
+
+
 ## Multiverse descriptives
 
 Instead of computing correlations or similarities, we can simply calculate the number of responses flagged as careless for each combination of indices: 
@@ -535,6 +694,81 @@ flag_multiverse <- do.call(rbind, flag_summary) |>
 
 
 saveRDS(flag_multiverse, here::here("output", "flag_multiverse.RDS"))
+```
+
+
+### Revision: Checking Multiverse Without Reaction Times
+
+Again, we here conduct the same analysis as above, but without response time indices:
+
+```{r}
+#| label: multiverse-careless-pct
+#| eval: !expr params$rerun
+
+careless_results_list <- readRDS(here::here("output", "careless_results_list.RDS"))
+careless_list <- lapply(careless_results_list, function(x){
+    x |> 
+    dplyr::select(external_id, counter, starts_with("flag"))
+})
+
+rm(careless_results_list)
+
+# compute careless responding flags
+flag_list_no_rt <- lapply(careless_list, function(x) {
+  x |>
+    rowwise() |>
+    dplyr::mutate(
+      flag_sum = sum(
+        flag_sd_within,
+        # flag_average_response_time,
+        # flag_sd_response_time,
+        flag_longstring,
+        flag_mode,
+        flag_anto,
+        na.rm = TRUE
+      )
+    ) |>
+    mutate(flag_sum1 = ifelse(flag_sum == 0, 0, 1),
+           flag_sum2 = ifelse(flag_sum < 2, 0, 1))
+})
+
+# remove unnecessary data attributes
+flag_list_no_rt <- lapply(flag_list_no_rt, function(x){
+  attr(x, "groups") <- NULL
+  x <- ungroup(x)
+  x
+})
+
+rm(careless_list)
+
+# for each list entry, calculate careless responding proportions
+# normed by the number of responses in our main df
+flag_df <- readRDS(here::here("output", "flag_df.RDS"))
+
+total_obs <- nrow(flag_df)
+non_missing_obs <- flag_df |> 
+  filter(!is.na(flag_sd_within)) |> 
+  nrow()
+
+
+flag_summary_no_rt <- lapply(flag_list_no_rt, function(x){
+  x |> 
+  ungroup() |> 
+  select(!c(external_id, counter, flag_sum)) |> 
+  summarize(across(everything(), 
+                   ~sum(., na.rm = TRUE))) |> 
+  mutate(across(everything(), 
+                ~ round(./ non_missing_obs * 100, 3))) 
+})
+
+rm(flag_list_no_rt)
+
+# attach specification information
+flag_multiverse_no_rt <- do.call(rbind, flag_summary_no_rt) |> 
+  bind_cols(specification_grid)
+
+
+saveRDS(flag_multiverse_no_rt, here::here("output", "flag_multiverse_no_rt.RDS"))
 ```
 
 
