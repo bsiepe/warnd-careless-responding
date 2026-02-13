@@ -42,15 +42,17 @@ calc_mode_percentage <- function(data,
 
 
 # Mahalanobis Distance ----------------------------------------------------
-calc_indicator_mahalanobis <- function(data, items) {
+calc_indicator_mahalanobis <- function(data, 
+                                       items,
+                                       id_col = "external_id") {
   # Note: Currently we provide missing values for distances that are not able to compute due to, for instance, singular matrices
   # Calculate Mahalanobis distances for each participant
   # (splits data for each id, applies function to each subset, then binds rows of resulting distances)
   
-  mahalanobis.results <- do.call(rbind, lapply(split(data, data$external_id), function(df) {
+  mahalanobis.results <- do.call(rbind, lapply(split(data, data[[id_col]]), function(df) {
     # Select the relevant question columns
     question_data <- df |>
-      dplyr::select(external_id, counter, all_of(items)) |>
+      dplyr::select(dplyr::all_of(id_col), counter, dplyr::all_of(items)) |>
       dplyr::mutate(dplyr::across(all_of(items), as.numeric)) |>
       stats::na.omit()
     
@@ -75,7 +77,7 @@ calc_indicator_mahalanobis <- function(data, items) {
     
     # Store results
     data.frame(
-      external_id = question_data$external_id, 
+      external_id = question_data[[id_col]], 
       counter = as.integer(question_data$counter),
       mahalanobis_dist = distances
     )
@@ -88,12 +90,14 @@ calc_indicator_mahalanobis <- function(data, items) {
 
 
 # Robust PCA --------------------------------------------------------------
-calc_indicator_rob_PCA_orthogonal_distance <- function(data, items) {
+calc_indicator_rob_PCA_orthogonal_distance <- function(data, 
+                                                       items,
+                                                       id_col = "external_id") {
   ## Note: The robust PCA calculates the optimal number of principal components to compute for every participants
-  robustpca.results <- do.call(rbind, lapply(split(data, data$external_id), function(df) {
+  robustpca.results <- do.call(rbind, lapply(split(data, data[[id_col]]), function(df) {
     # Select the relevant question columns and convert to matrix
     question_data <- df |>
-      dplyr::select(external_id, counter, dplyr::all_of(items)) |>
+      dplyr::select(dplyr::all_of(id_col), counter, dplyr::all_of(items)) |>
       dplyr::mutate(dplyr::across(dplyr::all_of(items), as.numeric)) |> 
       na.omit() |> 
       data.matrix()
@@ -113,7 +117,7 @@ calc_indicator_rob_PCA_orthogonal_distance <- function(data, items) {
         kValues<- output$k
         
       }, error = function(e) {
-        message("Error in PcaHubert calculation for external_id: ", unique(df$external_id), " - Replacing with NA")
+        message("Error in PcaHubert calculation for external_id: ", unique(df[[id_col]]), " - Replacing with NA")
         # NAs are already in place, so no need to modify distances/kValues
       })
       
@@ -121,17 +125,17 @@ calc_indicator_rob_PCA_orthogonal_distance <- function(data, items) {
     
     # Store results
     data.frame(
-      external_id = question_data[,"external_id"], 
+      external_id = question_data[, id_col], 
       counter = question_data[,"counter"],
       robustpca_dist = distances,
       kValues = kValues
     )
   }))
-  # fix issue with external_id column
+  # fix issue with id column column
   robustpca.results <- robustpca.results |>
-    dplyr::select(!external_id) |> 
-    tibble::rownames_to_column(var = "external_id") |> 
-    dplyr::mutate(external_id = gsub("\\..*", "", external_id)) |> 
+    dplyr::select(!dplyr::all_of(id_col)) |> 
+    tibble::rownames_to_column(var = id_col) |> 
+    dplyr::mutate(external_id = gsub("\\..*", "", id_col)) |> 
     dplyr::mutate(counter = as.integer(counter))
   
   return(robustpca.results)
@@ -139,25 +143,27 @@ calc_indicator_rob_PCA_orthogonal_distance <- function(data, items) {
 
 
 # Psychometrics synonym violation -----------------------------------------
-calc_psychometric_synonym_violations <- function(data, 
-                                                 items, 
-                                                 cor_threshold, 
+calc_psychometric_synonym_violations <- function(data,
+                                                 items,
+                                                 cor_threshold,
+                                                 id_col = "external_id",
                                                  synonym_difference_threshold) {
-  
   ## Select relevant data to calculate correlations on
   question_data <- data |>
-    dplyr::select(external_id, counter, all_of(items)) |>
+    dplyr::select(all_of(id_col), counter, all_of(items)) |>
     dplyr::mutate(dplyr::across(dplyr::all_of(items), as.numeric)) |> # Ensure numeric data
-    stats::na.omit() 
+    stats::na.omit()
   
   n_question_cols <- ncol(question_data)
   
   ## Calculate correlations
-  corr.temp <- rcorr(question_data |> 
-                       dplyr::select(3:n_question_cols) |>  
-                       data.matrix(), type = 'spearman') # Correlation matrix
+  corr.temp <- rcorr(question_data |>
+                       dplyr::select(3:n_question_cols) |>
+                       data.matrix(),
+                     type = 'spearman') # Correlation matrix
   
-  flattenCorrMatrix <- function(corrmat, pmat) { # Flatten the correlation matrix
+  flattenCorrMatrix <- function(corrmat, pmat) {
+    # Flatten the correlation matrix
     ut <- upper.tri(corrmat)
     data.frame(
       row = rownames(corrmat)[row(corrmat)[ut]],
@@ -166,31 +172,41 @@ calc_psychometric_synonym_violations <- function(data,
       p = pmat[ut]
     )
   }
-  corr.temp <- flattenCorrMatrix(corr.temp$r, corr.temp$P) |>  
+  corr.temp <- flattenCorrMatrix(corr.temp$r, corr.temp$P) |>
     dplyr::arrange(cor)
   
   ## Filter correlations that reach cut-off to be considered synonyms
-  synonym_pairs <- corr.temp |>  
-    dplyr::filter(cor >= cor_threshold)  |> 
-    dplyr::rename('word1' = row ,
-           'word2' = column) |> 
+  synonym_pairs <- corr.temp |>
+    dplyr::filter(cor >= cor_threshold)  |>
+    dplyr::rename('word1' = row , 'word2' = column) |>
     dplyr::select(1:2)
   
   ## Calculate violations per row
-  psychometric.synonym.count <- matrix(nrow = nrow(question_data), ncol = nrow(synonym_pairs)) # Create empty matrix to fill
+  psychometric.synonym.count <- matrix(nrow = nrow(question_data),
+                                       ncol = nrow(synonym_pairs)) # Create empty matrix to fill
   
-  for (row in 1:nrow(synonym_pairs)){ # Loop over pairs
+  for (row in 1:nrow(synonym_pairs)) {
+    # Loop over pairs
     # Select two synonym items from the relevant response data
-    df.temp <- question_data |>  
-      dplyr::select(as.character(synonym_pairs[row, 1]), as.character(synonym_pairs[row, 2]))
+    df.temp <- question_data |>
+      dplyr::select(as.character(synonym_pairs[row, 1]),
+                    as.character(synonym_pairs[row, 2]))
     
     # Check if the difference between scores on those items reach the threshold
     psychometric.synonym.count[, row] <- abs(df.temp[, 1] - df.temp[, 2]) >= synonym_difference_threshold
   }
-  psychometric.synonym.count <- cbind(question_data$external_id, question_data$counter, # Bind id, counter, and synonym violation counts
-                                      rowSums(psychometric.synonym.count)) |>  
-    as.data.frame() |>  
-    dplyr::rename('external_id' = V1, 'counter' = V2, 'syno_violations' = V3) |> 
+  psychometric.synonym.count <- cbind(
+    question_data[[id_col]],
+    question_data$counter,
+    # Bind id, counter, and synonym violation counts
+    rowSums(psychometric.synonym.count)
+  ) |>
+    as.data.frame() |>
+    dplyr::rename(
+      'external_id' = V1,
+      'counter' = V2,
+      'syno_violations' = V3
+    ) |>
     dplyr::mutate(counter = as.numeric(counter),
                   syno_violations = as.numeric(syno_violations))
   
@@ -206,6 +222,7 @@ calc_psychometric_antonym_violations <- function(data,
                                                  items, 
                                                  antonym_pair = NULL,
                                                  cor_threshold = NULL, 
+                                                 id_col = "external_id",
                                                  flag_type = "raw_value",
                                                  antonym_maxvalue_threshold) {
   # if antonym_pair is a vector, convert to dataframe
@@ -214,7 +231,7 @@ calc_psychometric_antonym_violations <- function(data,
   }
   ## select relevant data to calculate correlations on
   question_data <- data |>
-    dplyr::select(external_id, counter, dplyr::all_of(items)) |>
+    dplyr::select(all_of(id_col), counter, dplyr::all_of(items)) |>
     dplyr::mutate(dplyr::across(dplyr::all_of(items), as.numeric)) |> # Ensure numeric data
     stats::na.omit() 
   
@@ -272,7 +289,7 @@ calc_psychometric_antonym_violations <- function(data,
     
   }
   
-  psychometric.antonym.count <- cbind(question_data$external_id, question_data$counter, # Bind id, counter, and antonym violation counts
+  psychometric.antonym.count <- cbind(question_data[[id_col]], question_data$counter, # Bind id, counter, and antonym violation counts
                                       rowSums(psychometric.antonym.count)) |> 
     as.data.frame() |> 
     dplyr::rename('external_id' = V1, 'counter' = V2, 'anto_violations' = V3) |> 
@@ -285,10 +302,11 @@ calc_psychometric_antonym_violations <- function(data,
 # SD Response Times -------------------------------------------------------
 calc_summary_response_times <- function(data, 
                                         items,
+                                        id_col = "external_id",
                                         summary = "sd") {
 
   # preserve identifying columns
-  id_cols <- data[, c("external_id", "counter")]
+  id_cols <- data[, c(id_col, "counter")]
   
   #  make numeric to interpret it as seconds (needed for differences later)
   data[items] <- lapply(data[items], as.POSIXlt, format = "%Y-%m-%d %H:%M:%OS")
@@ -321,11 +339,12 @@ calc_summary_response_times <- function(data,
 
 # Longstring Proportions --------------------------------------------------
 calc_longstring_counts <- function(data,
-                                        items,
-                                        rt_items){
+                                   items,
+                                   id_col = "external_id",
+                                   rt_items){
   
   # preserve identifying columns
-  id_cols <- data[, c("external_id", "counter")]
+  id_cols <- data[, c(id_col, "counter")]
   
   # ensure items and rt_items are of the same length and match
   stopifnot(length(items) == length(rt_items))
