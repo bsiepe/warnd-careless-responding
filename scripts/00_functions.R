@@ -6,12 +6,13 @@
 # Standard deviations within-assessment -----------------------------------
 calc_within_assessment_sd <- function(data,
                                       items = ema_items,
-                                      id_col = user_id) {
+                                      id_col = "external_id",
+                                      counter_col = "counter") {
   data |>
     dplyr::rowwise() |>
     dplyr::mutate(assessment_sd = sd(dplyr::c_across(dplyr::all_of(items)), na.rm = TRUE)) |>
     dplyr::ungroup() |>
-    dplyr::select({{ id_col }}, counter, assessment_sd)
+    dplyr::select(dplyr::all_of(id_col), dplyr::all_of(counter_col), assessment_sd)
 }
 
 
@@ -25,13 +26,14 @@ calc_mode <- function(x) {
 
 calc_mode_percentage <- function(data,
                                  items = ema_items,
-                                 id_col = user_id) {
+                                 id_col = "external_id",
+                                 counter_col = "counter") {
   data |>
     dplyr::rowwise() |>
     dplyr::mutate(mode = calc_mode(dplyr::c_across(dplyr::all_of(items))),
-           is_mode = mean(dplyr::c_across(dplyr::all_of(items)) == mode, na.rm = TRUE)) |>
+                  is_mode = mean(dplyr::c_across(dplyr::all_of(items)) == mode, na.rm = TRUE)) |>
     dplyr::ungroup() |>
-    dplyr::select({{ id_col }}, counter, mode_count = is_mode) |> 
+    dplyr::select(dplyr::all_of(id_col), dplyr::all_of(counter_col), mode_count = is_mode) |> 
     dplyr::mutate(mode_count = if_else(is.nan(mode_count), NA, mode_count))
 }
 
@@ -44,7 +46,8 @@ calc_mode_percentage <- function(data,
 # Mahalanobis Distance ----------------------------------------------------
 calc_indicator_mahalanobis <- function(data, 
                                        items,
-                                       id_col = "external_id") {
+                                       id_col = "external_id",
+                                       counter_col = "counter") {
   # Note: Currently we provide missing values for distances that are not able to compute due to, for instance, singular matrices
   # Calculate Mahalanobis distances for each participant
   # (splits data for each id, applies function to each subset, then binds rows of resulting distances)
@@ -52,7 +55,7 @@ calc_indicator_mahalanobis <- function(data,
   mahalanobis.results <- do.call(rbind, lapply(split(data, data[[id_col]]), function(df) {
     # Select the relevant question columns
     question_data <- df |>
-      dplyr::select(dplyr::all_of(id_col), counter, dplyr::all_of(items)) |>
+      dplyr::select(dplyr::all_of(id_col), dplyr::all_of(counter_col), dplyr::all_of(items)) |>
       dplyr::mutate(dplyr::across(all_of(items), as.numeric)) |>
       stats::na.omit()
     
@@ -78,7 +81,7 @@ calc_indicator_mahalanobis <- function(data,
     # Store results
     data.frame(
       external_id = question_data[[id_col]], 
-      counter = as.integer(question_data$counter),
+      counter = as.integer(question_data[[counter_col]]),
       mahalanobis_dist = distances
     )
     
@@ -92,12 +95,13 @@ calc_indicator_mahalanobis <- function(data,
 # Robust PCA --------------------------------------------------------------
 calc_indicator_rob_PCA_orthogonal_distance <- function(data, 
                                                        items,
-                                                       id_col = "external_id") {
+                                                       id_col = "external_id",
+                                                       counter_col = "counter") {
   ## Note: The robust PCA calculates the optimal number of principal components to compute for every participants
   robustpca.results <- do.call(rbind, lapply(split(data, data[[id_col]]), function(df) {
     # Select the relevant question columns and convert to matrix
     question_data <- df |>
-      dplyr::select(dplyr::all_of(id_col), counter, dplyr::all_of(items)) |>
+      dplyr::select(dplyr::all_of(id_col), dplyr::all_of(counter_col), dplyr::all_of(items)) |>
       dplyr::mutate(dplyr::across(dplyr::all_of(items), as.numeric)) |> 
       na.omit() |> 
       data.matrix()
@@ -126,7 +130,7 @@ calc_indicator_rob_PCA_orthogonal_distance <- function(data,
     # Store results
     data.frame(
       external_id = question_data[, id_col], 
-      counter = question_data[,"counter"],
+      counter = question_data[, counter_col],
       robustpca_dist = distances,
       kValues = kValues
     )
@@ -147,10 +151,11 @@ calc_psychometric_synonym_violations <- function(data,
                                                  items,
                                                  cor_threshold,
                                                  id_col = "external_id",
+                                                 counter_col = "counter",
                                                  synonym_difference_threshold) {
   ## Select relevant data to calculate correlations on
   question_data <- data |>
-    dplyr::select(all_of(id_col), counter, all_of(items)) |>
+    dplyr::select(all_of(id_col), dplyr::all_of(counter_col), all_of(items)) |>
     dplyr::mutate(dplyr::across(dplyr::all_of(items), as.numeric)) |> # Ensure numeric data
     stats::na.omit()
   
@@ -197,7 +202,7 @@ calc_psychometric_synonym_violations <- function(data,
   }
   psychometric.synonym.count <- cbind(
     question_data[[id_col]],
-    question_data$counter,
+    question_data[[counter_col]],
     # Bind id, counter, and synonym violation counts
     rowSums(psychometric.synonym.count)
   ) |>
@@ -223,6 +228,7 @@ calc_psychometric_antonym_violations <- function(data,
                                                  antonym_pair = NULL,
                                                  cor_threshold = NULL, 
                                                  id_col = "external_id",
+                                                 counter_col = "counter",
                                                  flag_type = "raw_value",
                                                  antonym_maxvalue_threshold) {
   # if antonym_pair is a vector, convert to dataframe
@@ -231,7 +237,7 @@ calc_psychometric_antonym_violations <- function(data,
   }
   ## select relevant data to calculate correlations on
   question_data <- data |>
-    dplyr::select(all_of(id_col), counter, dplyr::all_of(items)) |>
+    dplyr::select(all_of(id_col), dplyr::all_of(counter_col), dplyr::all_of(items)) |>
     dplyr::mutate(dplyr::across(dplyr::all_of(items), as.numeric)) |> # Ensure numeric data
     stats::na.omit() 
   
@@ -289,7 +295,7 @@ calc_psychometric_antonym_violations <- function(data,
     
   }
   
-  psychometric.antonym.count <- cbind(question_data[[id_col]], question_data$counter, # Bind id, counter, and antonym violation counts
+  psychometric.antonym.count <- cbind(question_data[[id_col]], question_data[[counter_col]], # Bind id, counter, and antonym violation counts
                                       rowSums(psychometric.antonym.count)) |> 
     as.data.frame() |> 
     dplyr::rename('external_id' = V1, 'counter' = V2, 'anto_violations' = V3) |> 
@@ -303,10 +309,11 @@ calc_psychometric_antonym_violations <- function(data,
 calc_summary_response_times <- function(data, 
                                         items,
                                         id_col = "external_id",
+                                        counter_col = "counter",
                                         summary = "sd") {
-
+  
   # preserve identifying columns
-  id_cols <- data[, c(id_col, "counter")]
+  id_cols <- data[, c(id_col, counter_col)]
   
   #  make numeric to interpret it as seconds (needed for differences later)
   data[items] <- lapply(data[items], as.POSIXlt, format = "%Y-%m-%d %H:%M:%OS")
@@ -341,14 +348,15 @@ calc_summary_response_times <- function(data,
 calc_longstring_counts <- function(data,
                                    items,
                                    id_col = "external_id",
+                                   counter_col = "counter",
                                    rt_items){
   
   # preserve identifying columns
-  id_cols <- data[, c(id_col, "counter")]
+  id_cols <- data[, c(id_col, counter_col)]
   
   # ensure items and rt_items are of the same length and match
   stopifnot(length(items) == length(rt_items))
-    rt_truncated <- gsub("rt_", "", rt_items)
+  rt_truncated <- gsub("rt_", "", rt_items)
   stopifnot(identical(rt_truncated, items))
   
   #  make numeric to interpret it as seconds (needed for differences later)
@@ -370,10 +378,8 @@ calc_longstring_counts <- function(data,
   }))
   # convert ordered_responses to a data frame
   ordered_responses_df <- as.data.frame(ordered_responses)
-  
-  # unlist 
   ordered_responses_df <- as.data.frame(do.call(cbind, lapply(ordered_responses_df, unlist)))
- 
+  
   # calculate maximum consecutive identical responses, handling NA
   max_consecutive <- function(row) {
     if (all(is.na(row))) {
@@ -403,17 +409,16 @@ calc_longstring_counts <- function(data,
   # Calculate maximum consecutive identical responses for each row
   max_consecutives <- apply(ordered_responses_df, 1, max_consecutive)
   
-  # Calculate proportions
+  # calculate proportions
   proportions <- max_consecutives / ncol(ordered_responses_df)
   
-  # Combine results with identifying columns
+  # combine results with identifying columns
   result <- data.frame(id_cols, longstring_count = proportions)
   
   return(result)
-   
-  
   
 }
+
 
 
 # Carelessness Analysis Helpers --------------------------------------------
