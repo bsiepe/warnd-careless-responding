@@ -3,11 +3,16 @@
 This repository contains the supplementary files for the manuscript: 
 > Identifying Careless Responding in Ecological Momentary Assessment: Inconsistent Signals from Different Detection Methods in the WARN-D Data
 
-
 You can cite this project as: 
 
 ```BibTeX
-Will be updated once preprint is out. 
+@online{vogelsmeierIdentifyingCarelessResponding2025,
+  title = {Identifying careless responding in ecological momentary assessment: {{Inconsistent}} signals from different detection methods in the {{WARN-D}} data},
+  author = {Vogelsmeier, Leonie V. D. E. and Siepe, Björn S. and Ulitzsch, Esther and Eisele, Gudrun and Geeraerts, Joran and Klocek, Adam and Proppert, Ricarda K K and Rieble, Carlotta and Tutunji, Rayyan and Dejonckheere, Egon and Kuppens, Peter and Fried, Eiko I.},
+  date = {2025-09-22},
+  doi = {10.31234/osf.io/4dfbz_v1},
+  note = {PsyArXiv}
+}
 ```
 
 ## File structure
@@ -26,6 +31,7 @@ All Quarto files are available as source code (`.qmd`) and as a rendered version
 | `00_functions.R`                | Contains auxiliary functions                                                |
 | `01_calculate_indices`          | Code to calculate indices of C\\IER                                         |
 | `01_visualize_indices`          | Code to analyze and visualize all indices and model results. Produces main figures for the manuscript |
+|`01_visualize_indices_no_rt.qmd`	| Visualizations and analyses of indices excluding the response-time (RT) indices (supplemental sensitivity analysis) |
 | `02_LPA`                        | Code and visualizations for the latent profile analysis                     |
 | `03_Mixture_IRT_model`          | Code and visualizations for the mixture IRT model                           |
 | `04_Response_Time_Mixture_Model`| Code and visualizations for the response time mixture model                 |
