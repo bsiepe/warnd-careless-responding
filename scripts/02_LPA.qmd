@@ -64,7 +64,7 @@ We first install and load all relevant packages.
 ```{r packages, warning = FALSE, message = FALSE}
 if(!require(pacman)) install.packages("pacman")
 pacman::p_load("dplyr", "tidyr", "here", "ggplot2", "depmixS4", "tidyLPA",
-               "tidiverse","viridis")
+               "tidyverse","viridis")
 ```
 
 # Data Preparation
