@@ -746,7 +746,7 @@ saveRDS(flag_multiverse, here::here("output", "flag_multiverse.RDS"))
 Again, we here conduct the same analysis as above, but without response time indices:
 
 ```{r}
-#| label: multiverse-careless-pct
+#| label: multiverse-careless-pct-no-rct
 #| eval: !expr params$rerun
 
 careless_results_list <- readRDS(here::here("output", "careless_results_list.RDS"))
