@@ -20,6 +20,7 @@ You can cite this project as:
 
 ### `\data\`
 Contains the data used for this project. As described in the manuscript, data used for this project wil be made available once all data collection is finished and all data are cleaned and anonymized. 
+A codebook for the data which explains each individual variable referenced in our code is available [on OSF](https://osf.io/2jd9h/files/hdkv7).
 
 
 ### `\scripts\`
