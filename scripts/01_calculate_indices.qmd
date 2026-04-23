@@ -89,6 +89,15 @@ rt_ema_items <- paste0("rt_", ema_items)
 ```
 
 
+While we cannot share the full data as of now, here is a description of the columns in the data: 
+
+    -   All EMA items are suffixed with "_d", and their corresponding reaction times are prefixed with "rt_".
+    -   All EMA items are on Likert scales from 1 to 7. 
+    -   All reaction time columns are specific dates with milisecond precision, which we can then convert to differences between the items if we know their order.
+    -   A codebook for all variables with additional information is provided in the online supplement of the manuscript.
+
+
+
 For later visualizations, we also load the results of different model-based approaches: 
 ```{r load-models}
 lpa_res <- readRDS(here::here("output", "data_profiles_corrected.RDS"))
@@ -820,6 +829,5 @@ saveRDS(flag_multiverse_no_rt, here::here("output", "flag_multiverse_no_rt.RDS")
 
 ```{r session-info}
 pander::pander(sessionInfo())
-
 ```
 
